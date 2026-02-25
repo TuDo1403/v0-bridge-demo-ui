@@ -100,7 +100,6 @@ export function BridgePanel() {
     if (!activeSession) return;
 
     const s = activeSession.status;
-
     // Failed / error: show tracking card if we have a jobId, otherwise form with error
     if (s === "error" || s === "failed") {
       setError(activeSession.error ?? "Bridge transaction failed.");
@@ -353,7 +352,6 @@ export function BridgePanel() {
       pollingRef.current = setInterval(async () => {
         try {
           const res = await pollBridgeStatus(jobId);
-          console.log("[v0] pollBridgeStatus response:", JSON.stringify(res));
           const mappedStatus = mapBackendStatus(res.status);
 
           const sessionUpdates: Partial<BridgeSession> = {

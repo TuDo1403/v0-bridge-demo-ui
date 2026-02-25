@@ -1,11 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { STATUS_LABELS, type BridgeSession, type BridgeStatus } from "@/lib/types";
+import { retryBridgeJob } from "@/lib/bridge-service";
+import { STATUS_LABELS, mapBackendStatus, type BridgeSession, type BridgeStatus } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
 import { TOKENS } from "@/config/contracts";
 import { cn } from "@/lib/utils";
 import { ChainIcon } from "./chain-icon";
+import { Button } from "@/components/ui/button";
 import {
   Clock,
   ArrowRight,
@@ -15,6 +18,7 @@ import {
   Zap,
   Radio,
   X,
+  RotateCcw,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -63,83 +67,141 @@ function SessionRow({
   isActive: boolean;
 }) {
   const setActiveSession = useBridgeStore((s) => s.setActiveSession);
+  const updateSession = useBridgeStore((s) => s.updateSession);
   const removeSession = useBridgeStore((s) => s.removeSession);
   const sourceLabel = CHAINS[session.sourceChainId]?.shortLabel ?? "??";
   const destLabel = CHAINS[session.destChainId]?.shortLabel ?? "??";
   const token = TOKENS[session.tokenKey];
   const timeAgo = getTimeAgo(session.createdAt);
   const { icon, color } = sessionIndicator(session);
+  const [retrying, setRetrying] = useState(false);
 
-  const isTerminal =
-    session.status === "completed" || session.status === "error" || session.status === "failed";
+  const isFailed = session.status === "error" || session.status === "failed";
+  const isTerminal = session.status === "completed" || isFailed;
 
   // Phantom = awaiting_transfer without a tx hash (user never actually sent)
   const isPhantom =
     session.status === "awaiting_transfer" && !session.userTransferTxHash;
 
+  const handleRetryClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!session.jobId || retrying) return;
+    setRetrying(true);
+    try {
+      const res = await retryBridgeJob(session.jobId);
+      updateSession(session.id, {
+        status: mapBackendStatus(res.status),
+        error: undefined,
+      });
+      // Select the session so bridge panel shows the polling view
+      setActiveSession({ ...session, status: mapBackendStatus(res.status), error: undefined });
+    } catch (err) {
+      updateSession(session.id, {
+        error: err instanceof Error ? err.message : "Retry failed",
+      });
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   return (
-    <button
-      onClick={() => {
-        // If already active and idle, toggle off. Otherwise always select.
-        if (isActive && session.status === "idle") {
-          setActiveSession(null);
-        } else {
-          setActiveSession(session);
-        }
-      }}
-      className={cn(
-        "flex items-center gap-2.5 px-3 py-2 rounded transition-all w-full text-left group",
-        isActive
-          ? "bg-primary/10 border border-primary/20"
-          : "bg-muted/30 hover:bg-muted/60 border border-transparent"
-      )}
-    >
-      <div className={cn("shrink-0", color)}>{icon}</div>
-
-      <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground min-w-0">
-        <ChainIcon chainKey={CHAINS[session.sourceChainId]?.iconKey} className="h-3 w-3 shrink-0" />
-        <span>{sourceLabel}</span>
-        <ArrowRight className="h-2.5 w-2.5 shrink-0" />
-        <ChainIcon chainKey={CHAINS[session.destChainId]?.iconKey} className="h-3 w-3 shrink-0" />
-        <span>{destLabel}</span>
-      </div>
-
-      <span className="text-[11px] font-mono text-foreground whitespace-nowrap">
-        {session.amount} {token?.symbol ?? session.tokenKey}
-      </span>
-
-      <span
+    <div className="flex flex-col gap-1">
+      <button
+        onClick={() => {
+          if (isActive && session.status === "idle") {
+            setActiveSession(null);
+          } else {
+            setActiveSession(session);
+          }
+        }}
         className={cn(
-          "text-[9px] font-mono px-1.5 py-0.5 rounded ml-auto shrink-0 whitespace-nowrap",
-          session.status === "completed" && "bg-success/15 text-success",
-          (session.status === "error" || session.status === "failed") &&
-            "bg-destructive/15 text-destructive-foreground",
-          !isTerminal && "bg-primary/15 text-primary"
+          "flex items-center gap-2.5 px-3 py-2 rounded transition-all w-full text-left group",
+          isActive
+            ? "bg-primary/10 border border-primary/20"
+            : "bg-muted/30 hover:bg-muted/60 border border-transparent"
         )}
       >
-        {session.lzTracking?.lzStatus
-          ? session.lzTracking.lzStatus.replace("lz_", "").toUpperCase()
-          : STATUS_LABELS[session.status]}
-      </span>
+        <div className={cn("shrink-0", color)}>{icon}</div>
 
-      <span className="text-[9px] text-muted-foreground/50 font-mono shrink-0 hidden sm:block">
-        {timeAgo}
-      </span>
+        <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground min-w-0">
+          <ChainIcon chainKey={CHAINS[session.sourceChainId]?.iconKey} className="h-3 w-3 shrink-0" />
+          <span>{sourceLabel}</span>
+          <ArrowRight className="h-2.5 w-2.5 shrink-0" />
+          <ChainIcon chainKey={CHAINS[session.destChainId]?.iconKey} className="h-3 w-3 shrink-0" />
+          <span>{destLabel}</span>
+        </div>
 
-      {/* Dismiss button for phantom or terminal sessions */}
-      {(isPhantom || isTerminal) && (
-        <button
+        <span className="text-[11px] font-mono text-foreground whitespace-nowrap">
+          {session.amount} {token?.symbol ?? session.tokenKey}
+        </span>
+
+        <span
+          className={cn(
+            "text-[9px] font-mono px-1.5 py-0.5 rounded ml-auto shrink-0 whitespace-nowrap",
+            session.status === "completed" && "bg-success/15 text-success",
+            isFailed && "bg-destructive/15 text-destructive-foreground",
+            !isTerminal && "bg-primary/15 text-primary"
+          )}
+        >
+          {session.lzTracking?.lzStatus
+            ? session.lzTracking.lzStatus.replace("lz_", "").toUpperCase()
+            : STATUS_LABELS[session.status]}
+        </span>
+
+        <span className="text-[9px] text-muted-foreground/50 font-mono shrink-0 hidden sm:block">
+          {timeAgo}
+        </span>
+
+        {/* Dismiss button for phantom or terminal sessions */}
+        {(isPhantom || isTerminal) && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              removeSession(session.id);
+            }}
+            className="shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
+            title="Remove session"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </button>
+
+      {/* Retry button for failed sessions with a jobId */}
+      {isFailed && session.jobId && isActive && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={retrying}
+          onClick={handleRetryClick}
+          className="mx-3 mb-1 h-8 font-mono text-[10px] gap-1.5 border-destructive/30 hover:bg-destructive/10 text-destructive-foreground"
+        >
+          {retrying ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <RotateCcw className="h-3 w-3" />
+          )}
+          {retrying ? "Retrying..." : "Retry Bridge Job"}
+        </Button>
+      )}
+
+      {/* Retry processing for failed sessions without jobId but with tx hash */}
+      {isFailed && !session.jobId && session.userTransferTxHash && isActive && (
+        <Button
+          variant="outline"
+          size="sm"
           onClick={(e) => {
             e.stopPropagation();
-            removeSession(session.id);
+            // Select to trigger bridge panel to re-process
+            setActiveSession(session);
           }}
-          className="shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
-          title="Remove session"
+          className="mx-3 mb-1 h-8 font-mono text-[10px] gap-1.5 border-destructive/30 hover:bg-destructive/10 text-destructive-foreground"
         >
-          <X className="h-3 w-3" />
-        </button>
+          <RotateCcw className="h-3 w-3" />
+          Retry Processing
+        </Button>
       )}
-    </button>
+    </div>
   );
 }
 
