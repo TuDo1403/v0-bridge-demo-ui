@@ -376,45 +376,52 @@ export function TxSearch() {
     if (!hash.trim()) return null;
     if (!isRefresh) setError(null);
 
-    try {
-      const res = await fetch(`/api/lz/lookup?hash=${encodeURIComponent(hash.trim())}`, {
-        cache: "no-store",
-      });
+    const trimmed = hash.trim();
+    const base = "https://scan-testnet.layerzero-api.com/v1";
 
-      if (res.status === 404) {
-        if (!isRefresh) {
-          setError("No LayerZero message found for this hash. It may take a few minutes to be indexed.");
+    // Try tx hash endpoint first, then GUID endpoint
+    const urls = [
+      `${base}/messages/tx/${trimmed}`,
+      `${base}/messages/guid/${trimmed}`,
+    ];
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, {
+          headers: { Accept: "application/json" },
+        });
+
+        if (!res.ok) continue;
+
+        const body = await res.json();
+        const messages = body?.data ?? body?.messages;
+
+        // Array response
+        if (Array.isArray(messages) && messages.length > 0) {
+          const parsed = parseApiMessage(messages[0]);
+          setResult(parsed);
+          setError(null);
+          return parsed;
         }
-        if (!isRefresh) setResult(null);
-        return null;
-      }
-      if (!res.ok) {
-        if (!isRefresh) setError(`LayerZero API returned ${res.status}. Try again shortly.`);
-        return null;
-      }
 
-      const body = await res.json();
-      const messages = body?.messages;
-      if (!messages || messages.length === 0) {
-        if (!isRefresh) {
-          setError("No LayerZero message found. It may take a few minutes to be indexed after tx confirmation.");
+        // Single object response
+        if (body && typeof body === "object" && (body.guid || body.pathway)) {
+          const parsed = parseApiMessage(body);
+          setResult(parsed);
+          setError(null);
+          return parsed;
         }
-        if (!isRefresh) setResult(null);
-        return null;
+      } catch {
+        continue;
       }
-
-      const parsed = parseApiMessage(messages[0]);
-      setResult(parsed);
-      setError(null);
-      return parsed;
-    } catch (err) {
-      console.log("[v0] TxSearch lookup error:", err);
-      if (!isRefresh) {
-        setError("Could not reach LayerZero API. Check your connection and try again.");
-        setResult(null);
-      }
-      return null;
     }
+
+    // None of the endpoints returned data
+    if (!isRefresh) {
+      setError("No LayerZero message found. It may take a few minutes to be indexed after tx confirmation.");
+      setResult(null);
+    }
+    return null;
   }, []);
 
   const handleSearch = useCallback(async () => {
