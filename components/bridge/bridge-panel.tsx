@@ -470,6 +470,14 @@ export function BridgePanel() {
   const sourceChain = CHAINS[sourceChainId];
   const destChain = CHAINS[destChainId];
 
+  // Data-driven flag: show tracking view when session has progressed past initial steps
+  const showTrackingView = !!(
+    activeSession &&
+    activeSession.status !== "idle" &&
+    activeSession.status !== "awaiting_transfer" &&
+    (activeSession.userTransferTxHash || activeSession.jobId)
+  );
+
   // Dust amount warning
   const parsedAmount =
     amount && token ? parseUnits(amount || "0", token.decimals) : 0n;
@@ -489,7 +497,7 @@ export function BridgePanel() {
       )}
 
       {/* --- FORM STEP --- */}
-      {step === "form" && (
+      {step === "form" && !showTrackingView && (
         <div className="flex flex-col gap-4">
           {/* Source chain */}
           <div className="p-4 rounded-lg border border-border bg-card">
@@ -805,7 +813,7 @@ export function BridgePanel() {
       )}
 
       {/* --- TRANSFER STEP --- */}
-      {step === "transfer" && (
+      {step === "transfer" && !showTrackingView && (
         <div className="flex flex-col gap-4">
           <div className="p-4 rounded-lg border border-primary/30 bg-primary/5">
             <div className="flex items-start gap-3">
@@ -930,8 +938,10 @@ export function BridgePanel() {
         </div>
       )}
 
-      {/* --- POLLING STEP (with interactive tracking card) --- */}
-      {step === "polling" && activeSession && (
+      {/* --- SESSION TRACKING VIEW --- */}
+      {/* Purely data-driven: no dependency on local `step` state.
+          Clicking a recent session always shows tracking + retry. */}
+      {showTrackingView && activeSession && (
         <div className="flex flex-col gap-4">
           <TrackingCard session={activeSession} />
 
@@ -953,6 +963,19 @@ export function BridgePanel() {
                     Retry Bridge Job
                   </Button>
                 )}
+                {!activeSession.jobId && activeSession.userTransferTxHash && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setError(null);
+                      handlePostMine();
+                    }}
+                    className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Retry Processing
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   onClick={() => {
@@ -969,7 +992,7 @@ export function BridgePanel() {
             </div>
           )}
 
-          {/* In-progress but possibly stuck: subtle retry nudge */}
+          {/* In-progress: subtle nudge retry */}
           {activeSession.jobId &&
             activeSession.status !== "error" &&
             activeSession.status !== "failed" &&
@@ -994,20 +1017,16 @@ export function BridgePanel() {
               Nudge Backend
             </Button>
           )}
-        </div>
-      )}
 
-      {/* --- COMPLETE STEP --- */}
-      {step === "complete" && activeSession && (
-        <div className="flex flex-col gap-4">
-          <TrackingCard session={activeSession} />
-
-          <Button
-            onClick={handleRetry}
-            className="h-10 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            New Bridge
-          </Button>
+          {/* Completed: new bridge button */}
+          {activeSession.status === "completed" && (
+            <Button
+              onClick={handleRetry}
+              className="h-10 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              New Bridge
+            </Button>
+          )}
         </div>
       )}
     </div>
