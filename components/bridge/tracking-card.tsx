@@ -51,6 +51,11 @@ type TrackingPhase =
 
 function derivePhase(session: BridgeSession): TrackingPhase {
   const lz = session.lzTracking;
+
+  // Check compose failure FIRST -- backend may report "completed" even when
+  // lzCompose reverted on the destination chain.
+  if (lz?.composeStatus === "FAILED" || lz?.composeStatus === "failed") return "failed";
+
   if (session.status === "completed") return "complete";
   if (session.status === "error" || session.status === "failed") return "failed";
   // Session was reset to idle but still has an error (e.g. after a failed retry)

@@ -378,7 +378,14 @@ export function BridgePanel() {
           if (isTerminalStatus(res.status)) {
             if (pollingRef.current) clearInterval(pollingRef.current);
             pollingRef.current = null;
-            if (res.status === "completed") {
+
+            // Compose can fail even when the backend reports "completed"
+            const composeFailed =
+              res.composeStatus === "FAILED" || res.composeStatus === "failed";
+
+            if (composeFailed) {
+              setError("lzCompose failed on destination chain. You can retry the compose execution.");
+            } else if (res.status === "completed") {
               setStep("complete");
             } else if (res.status === "failed") {
               setError(res.error ?? "Bridge job failed");
@@ -492,8 +499,19 @@ export function BridgePanel() {
         activeSession.status !== "awaiting_transfer" && (
         <div className="p-3 rounded-lg border border-border bg-card">
           <StatusRail
-            currentStatus={activeSession.error && currentStatus === "idle" ? "error" : currentStatus}
-            error={activeSession.error ?? error ?? undefined}
+            currentStatus={
+              // Compose failure overrides "completed" -> show as failed
+              (activeSession.lzTracking?.composeStatus === "FAILED" || activeSession.lzTracking?.composeStatus === "failed")
+                ? "failed"
+                : activeSession.error && currentStatus === "idle"
+                  ? "error"
+                  : currentStatus
+            }
+            error={
+              (activeSession.lzTracking?.composeStatus === "FAILED" || activeSession.lzTracking?.composeStatus === "failed")
+                ? "lzCompose failed on destination chain"
+                : activeSession.error ?? error ?? undefined
+            }
           />
         </div>
       )}

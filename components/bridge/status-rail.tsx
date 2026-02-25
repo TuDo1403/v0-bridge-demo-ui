@@ -15,8 +15,15 @@ interface StatusRailProps {
 }
 
 export function StatusRail({ currentStatus, error }: StatusRailProps) {
-  const currentIndex = STATUS_ORDER.indexOf(currentStatus);
   const isError = currentStatus === "error" || currentStatus === "failed";
+  // For error/failed statuses that aren't in STATUS_ORDER, show progress up to
+  // the last known step (destination_confirmed) so the rail isn't all grey.
+  const rawIndex = STATUS_ORDER.indexOf(currentStatus);
+  const currentIndex = rawIndex >= 0
+    ? rawIndex
+    : isError
+      ? STATUS_ORDER.indexOf("destination_confirmed")
+      : 0;
 
   // Filter out idle for the visual rail
   const displaySteps = STATUS_ORDER.filter((s) => s !== "idle");
