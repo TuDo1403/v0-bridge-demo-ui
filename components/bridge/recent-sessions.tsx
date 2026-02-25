@@ -5,6 +5,7 @@ import { STATUS_LABELS, type BridgeSession, type BridgeStatus } from "@/lib/type
 import { CHAINS } from "@/config/chains";
 import { TOKENS } from "@/config/contracts";
 import { cn } from "@/lib/utils";
+import { ChainIcon } from "./chain-icon";
 import {
   Clock,
   ArrowRight,
@@ -89,8 +90,10 @@ function SessionRow({
       <div className={cn("shrink-0", color)}>{icon}</div>
 
       <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground min-w-0">
+        <ChainIcon chainKey={CHAINS[session.sourceChainId]?.iconKey} className="h-3 w-3 shrink-0" />
         <span>{sourceLabel}</span>
         <ArrowRight className="h-2.5 w-2.5 shrink-0" />
+        <ChainIcon chainKey={CHAINS[session.destChainId]?.iconKey} className="h-3 w-3 shrink-0" />
         <span>{destLabel}</span>
       </div>
 

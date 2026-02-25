@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CHAINS } from "@/config/chains";
+import { ChainIcon } from "./chain-icon";
 import { Wallet, LogOut, Copy, Check } from "lucide-react";
 import { useState } from "react";
 
@@ -49,7 +50,8 @@ export function WalletButton() {
         <Button variant="outline" className="font-mono text-sm gap-2">
           <span className="h-2 w-2 rounded-full bg-success shrink-0" />
           {chainMeta && (
-            <span className="text-muted-foreground text-[10px] hidden sm:inline">
+            <span className="flex items-center gap-1 text-muted-foreground text-[10px] hidden sm:inline-flex">
+              <ChainIcon chainKey={chainMeta.iconKey} className="h-3.5 w-3.5" />
               {chainMeta.shortLabel}
             </span>
           )}

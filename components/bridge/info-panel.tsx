@@ -7,6 +7,7 @@ import { CONTRACTS, getTokenAddress, TOKENS } from "@/config/contracts";
 import { CHAINS } from "@/config/chains";
 import { formatUnits, type Address } from "viem";
 import { Loader2, AlertCircle, RefreshCcw } from "lucide-react";
+import { ChainIcon } from "./chain-icon";
 import { cn } from "@/lib/utils";
 
 function DataRow({
@@ -17,6 +18,7 @@ function DataRow({
   isError = false,
   onRetry,
   highlight = false,
+  iconKey,
 }: {
   label: string;
   value: string;
@@ -25,6 +27,7 @@ function DataRow({
   isError?: boolean;
   onRetry?: () => void;
   highlight?: boolean;
+  iconKey?: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 py-1.5">
@@ -45,11 +48,12 @@ function DataRow({
       ) : (
         <span
           className={cn(
-            "text-xs truncate",
+            "text-xs truncate flex items-center gap-1.5",
             mono ? "font-mono" : "font-sans",
             highlight ? "text-primary" : "text-foreground"
           )}
         >
+          {iconKey && <ChainIcon chainKey={iconKey} className="h-3.5 w-3.5 shrink-0" />}
           {value}
         </span>
       )}
@@ -164,8 +168,8 @@ export function InfoPanel() {
       </span>
 
       <div className="flex flex-col divide-y divide-border">
-        <DataRow label="Source" value={sourceChain?.label ?? "--"} mono={false} />
-        <DataRow label="Dest" value={destChain?.label ?? "--"} mono={false} />
+        <DataRow label="Source" value={sourceChain?.label ?? "--"} mono={false} iconKey={sourceChain?.iconKey} />
+        <DataRow label="Dest" value={destChain?.label ?? "--"} mono={false} iconKey={destChain?.iconKey} />
         <DataRow
           label="Dst EID"
           value={dstEid !== undefined && dstEid !== null ? String(dstEid) : "--"}

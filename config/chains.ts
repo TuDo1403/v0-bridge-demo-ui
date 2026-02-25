@@ -48,6 +48,7 @@ export interface ChainMeta {
   lzEid: number;
   label: string;
   shortLabel: string;
+  iconKey: string;
   explorerTxUrl: (hash: string) => string;
 }
 
@@ -57,6 +58,7 @@ export const CHAINS: Record<number, ChainMeta> = {
     lzEid: 40161,
     label: "Sepolia",
     shortLabel: "SEP",
+    iconKey: "ethereum",
     explorerTxUrl: (h) => `https://sepolia.etherscan.io/tx/${h}`,
   },
   [riseTestnetChain.id]: {
@@ -64,6 +66,7 @@ export const CHAINS: Record<number, ChainMeta> = {
     lzEid: 40438,
     label: "RISE Testnet",
     shortLabel: "RISE",
+    iconKey: "rise",
     explorerTxUrl: (h) =>
       `${process.env.NEXT_PUBLIC_RISE_EXPLORER_URL ?? "https://testnet.rise.trade"}/tx/${h}`,
   },

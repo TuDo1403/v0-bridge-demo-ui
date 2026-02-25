@@ -15,6 +15,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { ChainIcon } from "./chain-icon";
 import {
   ExternalLink,
   Loader2,
@@ -287,8 +288,10 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             {!isTerminal && <ElapsedTimer since={session.createdAt} />}
           </div>
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+            <ChainIcon chainKey={sourceChain?.iconKey} className="h-3 w-3 shrink-0" />
             <span>{sourceChain?.shortLabel}</span>
             <ArrowRight className="h-2.5 w-2.5" />
+            <ChainIcon chainKey={destChain?.iconKey} className="h-3 w-3 shrink-0" />
             <span>{destChain?.shortLabel}</span>
             <span className="text-muted-foreground/30">|</span>
             <span>{session.amount} {token?.symbol}</span>
@@ -398,7 +401,8 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
           {/* EID info + addresses */}
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
-              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+              <span className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+                <ChainIcon chainKey={sourceChain?.iconKey} className="h-3 w-3" />
                 Source
               </span>
               <span className="text-[11px] font-mono text-foreground">
@@ -407,7 +411,8 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
               <AddressPill label="Sender" address={lz?.sender} />
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+              <span className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+                <ChainIcon chainKey={destChain?.iconKey} className="h-3 w-3" />
                 Destination
               </span>
               <span className="text-[11px] font-mono text-foreground">

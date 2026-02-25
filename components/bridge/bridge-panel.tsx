@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ChainIcon } from "./chain-icon";
 import { StatusRail } from "./status-rail";
 import { TrackingCard } from "./tracking-card";
 import { TxBadge } from "./tx-badge";
@@ -395,19 +396,28 @@ export function BridgePanel() {
                 value={String(sourceChainId)}
                 onValueChange={(v) => setSourceChainId(Number(v))}
               >
-                <SelectTrigger className="w-full sm:w-48 bg-muted/50 font-mono text-sm">
-                  <SelectValue />
+                <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
+                  <div className="flex items-center gap-2">
+                    <ChainIcon chainKey={sourceChain?.iconKey} className="h-4 w-4 text-foreground" />
+                    <SelectValue />
+                  </div>
                 </SelectTrigger>
                 <SelectContent>
-                  {BRIDGE_ROUTES.map((r) => (
-                    <SelectItem
-                      key={r.sourceChainId}
-                      value={String(r.sourceChainId)}
-                      className="font-mono text-sm"
-                    >
-                      {CHAINS[r.sourceChainId]?.label}
-                    </SelectItem>
-                  ))}
+                  {BRIDGE_ROUTES.map((r) => {
+                    const meta = CHAINS[r.sourceChainId];
+                    return (
+                      <SelectItem
+                        key={r.sourceChainId}
+                        value={String(r.sourceChainId)}
+                        className="font-mono text-sm"
+                      >
+                        <span className="flex items-center gap-2">
+                          <ChainIcon chainKey={meta?.iconKey} className="h-3.5 w-3.5" />
+                          {meta?.label}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
 
@@ -513,19 +523,28 @@ export function BridgePanel() {
               value={String(destChainId)}
               onValueChange={(v) => setDestChainId(Number(v))}
             >
-              <SelectTrigger className="w-full sm:w-48 bg-muted/50 font-mono text-sm">
-                <SelectValue />
+              <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
+                <div className="flex items-center gap-2">
+                  <ChainIcon chainKey={destChain?.iconKey} className="h-4 w-4 text-foreground" />
+                  <SelectValue />
+                </div>
               </SelectTrigger>
               <SelectContent>
-                {BRIDGE_ROUTES.map((r) => (
-                  <SelectItem
-                    key={r.destChainId}
-                    value={String(r.destChainId)}
-                    className="font-mono text-sm"
-                  >
-                    {CHAINS[r.destChainId]?.label}
-                  </SelectItem>
-                ))}
+                {BRIDGE_ROUTES.map((r) => {
+                  const meta = CHAINS[r.destChainId];
+                  return (
+                    <SelectItem
+                      key={r.destChainId}
+                      value={String(r.destChainId)}
+                      className="font-mono text-sm"
+                    >
+                      <span className="flex items-center gap-2">
+                        <ChainIcon chainKey={meta?.iconKey} className="h-3.5 w-3.5" />
+                        {meta?.label}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>
