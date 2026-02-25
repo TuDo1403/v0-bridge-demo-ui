@@ -478,6 +478,16 @@ export function BridgePanel() {
     (activeSession.userTransferTxHash || activeSession.jobId)
   );
 
+  console.log("[v0] render state:", {
+    step,
+    showTrackingView,
+    activeSessionId: activeSession?.id,
+    status: activeSession?.status,
+    jobId: activeSession?.jobId,
+    txHash: activeSession?.userTransferTxHash,
+    error: activeSession?.error,
+  });
+
   // Dust amount warning
   const parsedAmount =
     amount && token ? parseUnits(amount || "0", token.decimals) : 0n;
