@@ -13,6 +13,7 @@ import {
   Loader2,
   Zap,
   Radio,
+  X,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -61,6 +62,7 @@ function SessionRow({
   isActive: boolean;
 }) {
   const setActiveSession = useBridgeStore((s) => s.setActiveSession);
+  const removeSession = useBridgeStore((s) => s.removeSession);
   const sourceLabel = CHAINS[session.sourceChainId]?.shortLabel ?? "??";
   const destLabel = CHAINS[session.destChainId]?.shortLabel ?? "??";
   const token = TOKENS[session.tokenKey];
@@ -69,6 +71,10 @@ function SessionRow({
 
   const isTerminal =
     session.status === "completed" || session.status === "error";
+
+  // Phantom = awaiting_transfer without a tx hash (user never actually sent)
+  const isPhantom =
+    session.status === "awaiting_transfer" && !session.userTransferTxHash;
 
   return (
     <button
@@ -109,6 +115,20 @@ function SessionRow({
       <span className="text-[9px] text-muted-foreground/50 font-mono shrink-0 hidden sm:block">
         {timeAgo}
       </span>
+
+      {/* Dismiss button for phantom or terminal sessions */}
+      {(isPhantom || isTerminal) && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            removeSession(session.id);
+          }}
+          className="shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
+          title="Remove session"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
     </button>
   );
 }

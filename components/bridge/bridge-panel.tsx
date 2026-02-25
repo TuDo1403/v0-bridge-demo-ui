@@ -187,14 +187,31 @@ export function BridgePanel() {
     }
   }, [transferError]);
 
-  // Update session when transfer hash received
+  // Create session when transfer hash is received (= user actually sent the tx)
   useEffect(() => {
-    if (transferHash && activeSession) {
+    if (!transferHash || !address || !depositAddress) return;
+
+    // If there's already an active session with this hash, just update it
+    if (activeSession?.userTransferTxHash === transferHash) return;
+
+    // If we already have an active session but no hash yet, update it
+    if (activeSession && !activeSession.userTransferTxHash) {
       updateSession(activeSession.id, {
         userTransferTxHash: transferHash,
         status: "transfer_submitted",
       });
+      return;
     }
+
+    // Otherwise create the session now (first time a tx hash appears)
+    const session = createSession({
+      userAddress: address,
+      depositAddress,
+    });
+    updateSession(session.id, {
+      userTransferTxHash: transferHash,
+      status: "transfer_submitted",
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transferHash]);
 
@@ -294,10 +311,8 @@ export function BridgePanel() {
     if (!address || !depositAddress) return;
     setError(null);
 
-    const session = createSession({
-      userAddress: address,
-      depositAddress,
-    });
+    // Do NOT create session yet -- only move to transfer step.
+    // Session is created once the user actually submits the on-chain tx.
 
     // Check if user is on the right chain
     if (walletChainId !== sourceChainId) {
@@ -305,6 +320,12 @@ export function BridgePanel() {
     }
 
     setStep("transfer");
+  };
+
+  const handleCancelTransfer = () => {
+    setError(null);
+    setStep("form");
+    // Don't reset form fields so the user keeps their amount/token selection
   };
 
   const handleSendTransfer = () => {
@@ -351,8 +372,8 @@ export function BridgePanel() {
   // --- Render ---
   return (
     <div className="flex flex-col gap-4">
-      {/* Status rail - always visible when session active */}
-      {activeSession && (
+      {/* Status rail - visible when session has progressed past idle */}
+      {activeSession && activeSession.status !== "idle" && activeSession.status !== "awaiting_transfer" && (
         <div className="p-3 rounded-lg border border-border bg-card">
           <StatusRail
             currentStatus={currentStatus}
@@ -615,7 +636,7 @@ export function BridgePanel() {
       )}
 
       {/* --- TRANSFER STEP --- */}
-      {step === "transfer" && activeSession && (
+      {step === "transfer" && (
         <div className="flex flex-col gap-4">
           <div className="p-4 rounded-lg border border-primary/30 bg-primary/5">
             <div className="flex items-start gap-3">
@@ -627,30 +648,59 @@ export function BridgePanel() {
                 <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
                   {depositAddress}
                 </p>
+                <button
+                  onClick={handleCopyDeposit}
+                  className="flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors mt-1 self-start"
+                >
+                  {depositCopied ? (
+                    <>
+                      <Check className="h-3 w-3" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" />
+                      Copy address
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
 
           {/* Transfer action */}
-          <Button
-            onClick={handleSendTransfer}
-            disabled={isTransferPending || isWaitingForTx}
-            className="h-12 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            {isTransferPending ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Confirm in Wallet...
-              </span>
-            ) : isWaitingForTx ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Waiting for Confirmation...
-              </span>
-            ) : (
-              "Send Transfer"
+          <div className="flex gap-2">
+            {/* Cancel -- only available before tx is submitted */}
+            {!transferHash && (
+              <Button
+                variant="outline"
+                onClick={handleCancelTransfer}
+                disabled={isTransferPending}
+                className="h-12 font-mono text-sm flex-shrink-0"
+              >
+                Cancel
+              </Button>
             )}
-          </Button>
+            <Button
+              onClick={handleSendTransfer}
+              disabled={isTransferPending || isWaitingForTx}
+              className="h-12 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90 flex-1"
+            >
+              {isTransferPending ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Confirm in Wallet...
+                </span>
+              ) : isWaitingForTx ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Waiting for Confirmation...
+                </span>
+              ) : (
+                `Send ${amount} ${token?.symbol}`
+              )}
+            </Button>
+          </div>
 
           {/* Tx hash badges */}
           {transferHash && (
@@ -668,11 +718,11 @@ export function BridgePanel() {
               </div>
               <Button
                 variant="outline"
-                onClick={handleRetry}
+                onClick={handleCancelTransfer}
                 className="font-mono text-sm gap-2"
               >
                 <RotateCcw className="h-3 w-3" />
-                Retry
+                Go Back
               </Button>
             </div>
           )}

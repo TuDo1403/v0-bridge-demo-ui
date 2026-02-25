@@ -61,6 +61,9 @@ interface BridgeStore {
   setActiveSession: (session: BridgeSession | null) => void;
   loadRecentSessions: () => void;
 
+  // Remove session (for phantom/cancelled sessions)
+  removeSession: (id: string) => void;
+
   // Reset
   resetForm: () => void;
 }
@@ -131,6 +134,16 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   loadRecentSessions: () => {
     const sessions = loadSessions();
     set({ recentSessions: sessions });
+  },
+
+  removeSession: (id) => {
+    const sessions = get().recentSessions.filter((s) => s.id !== id);
+    saveSessions(sessions);
+    const active = get().activeSession;
+    set({
+      recentSessions: sessions,
+      activeSession: active?.id === id ? null : active,
+    });
   },
 
   resetForm: () =>
