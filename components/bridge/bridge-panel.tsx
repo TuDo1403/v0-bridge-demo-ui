@@ -484,11 +484,9 @@ export function BridgePanel() {
   return (
     <div className="flex flex-col gap-4">
       {/* Status rail - visible when session has progressed past idle, or has a jobId/error */}
-      {activeSession && (
-        activeSession.status !== "idle" ||
-        activeSession.jobId ||
-        activeSession.error
-      ) && activeSession.status !== "awaiting_transfer" && (
+      {activeSession &&
+        (activeSession.status !== "idle" || activeSession.jobId || activeSession.error) &&
+        activeSession.status !== "awaiting_transfer" && (
         <div className="p-3 rounded-lg border border-border bg-card">
           <StatusRail
             currentStatus={activeSession.error && currentStatus === "idle" ? "error" : currentStatus}

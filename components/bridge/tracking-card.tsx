@@ -267,10 +267,9 @@ function ComposeBadge({ status, txHash, explorerUrl }: {
 
 export function TrackingCard({ session }: { session: BridgeSession }) {
   const { updateSession } = useBridgeStore();
+  const phase = derivePhase(session);
   const [expanded, setExpanded] = useState(phase === "failed");
   const [pollCount, setPollCount] = useState(0);
-
-  const phase = derivePhase(session);
   const lz = session.lzTracking;
   const sourceChain = CHAINS[session.sourceChainId];
   const destChain = CHAINS[session.destChainId];
