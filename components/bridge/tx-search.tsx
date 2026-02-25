@@ -423,17 +423,43 @@ function LzResultCard({
             </div>
           )}
 
-          {/* Token info */}
+          {/* Token info with fee breakdown */}
           {formattedAmount && (
-            <div className="flex items-center gap-3 p-2.5 rounded-md bg-muted/30 border border-border/50">
-              <TokenIcon tokenKey="usdc" className="h-5 w-5 shrink-0" />
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-mono font-medium text-foreground">{formattedAmount} USDC</span>
-                <span className="text-[9px] font-mono text-muted-foreground">
-                  {srcChain?.shortLabel ?? "Source"} to {dstChain?.shortLabel ?? "Dest"}
-                  {data.nonce != null && <span className="ml-2 text-muted-foreground/60">Nonce #{data.nonce}</span>}
-                </span>
+            <div className="p-2.5 rounded-md bg-muted/30 border border-border/50">
+              <div className="flex items-center gap-3">
+                <TokenIcon tokenKey="usdc" className="h-5 w-5 shrink-0" />
+                <div className="flex flex-col gap-0.5 flex-1">
+                  <span className="text-xs font-mono font-medium text-foreground">{formattedAmount} USDC</span>
+                  <span className="text-[9px] font-mono text-muted-foreground">
+                    {srcChain?.shortLabel ?? "Source"} to {dstChain?.shortLabel ?? "Dest"}
+                    {data.nonce != null && <span className="ml-2 text-muted-foreground/60">Nonce #{data.nonce}</span>}
+                  </span>
+                </div>
               </div>
+              {/* Fee breakdown: 0.5% (50 bps) */}
+              {data.amountRaw != null && data.amountRaw > 0n && (() => {
+                const feeBps = 50n; // 0.5%
+                const fee = (data.amountRaw! * feeBps) / 10000n;
+                const net = data.amountRaw! - fee;
+                const feeStr = formatTokenAmount(fee);
+                const netStr = formatTokenAmount(net);
+                return (
+                  <div className="mt-2 pt-2 border-t border-border/30 grid grid-cols-3 gap-2 text-[10px] font-mono">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Sent</span>
+                      <span className="text-foreground">{formattedAmount}</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Fee (0.5%)</span>
+                      <span className="text-warning">{feeStr ?? "--"}</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Received</span>
+                      <span className="text-success">{netStr ?? "--"}</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
