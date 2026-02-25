@@ -372,35 +372,47 @@ export function TxSearch() {
     };
   }, []);
 
-  const doLookup = useCallback(async (hash: string) => {
-    if (!hash.trim()) return;
-    setError(null);
+  const doLookup = useCallback(async (hash: string, isRefresh = false) => {
+    if (!hash.trim()) return null;
+    if (!isRefresh) setError(null);
 
     try {
-      const res = await fetch(`/api/lz/lookup?hash=${encodeURIComponent(hash.trim())}`);
+      const res = await fetch(`/api/lz/lookup?hash=${encodeURIComponent(hash.trim())}`, {
+        cache: "no-store",
+      });
+
       if (res.status === 404) {
-        setError("No LayerZero message found for this hash. It may not be indexed yet.");
-        setResult(null);
+        if (!isRefresh) {
+          setError("No LayerZero message found for this hash. It may take a few minutes to be indexed.");
+        }
+        if (!isRefresh) setResult(null);
         return null;
       }
       if (!res.ok) {
-        setError(`API error (${res.status})`);
-        setResult(null);
+        if (!isRefresh) setError(`LayerZero API returned ${res.status}. Try again shortly.`);
         return null;
       }
+
       const body = await res.json();
       const messages = body?.messages;
       if (!messages || messages.length === 0) {
-        setError("No LayerZero message found for this hash.");
-        setResult(null);
+        if (!isRefresh) {
+          setError("No LayerZero message found. It may take a few minutes to be indexed after tx confirmation.");
+        }
+        if (!isRefresh) setResult(null);
         return null;
       }
+
       const parsed = parseApiMessage(messages[0]);
       setResult(parsed);
+      setError(null);
       return parsed;
-    } catch {
-      setError("Network error. Please try again.");
-      setResult(null);
+    } catch (err) {
+      console.log("[v0] TxSearch lookup error:", err);
+      if (!isRefresh) {
+        setError("Could not reach LayerZero API. Check your connection and try again.");
+        setResult(null);
+      }
       return null;
     }
   }, []);
@@ -419,7 +431,7 @@ export function TxSearch() {
     if (data && data.status !== "lz_delivered" && data.status !== "lz_failed") {
       setPollingActive(true);
       pollRef.current = setInterval(async () => {
-        const updated = await doLookup(query);
+        const updated = await doLookup(query, true);
         if (updated && (updated.status === "lz_delivered" || updated.status === "lz_failed")) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
