@@ -34,7 +34,7 @@ export const riseTestnetChain: Chain = {
     default: { http: [RISE_TESTNET_RPC_URL] },
   },
   blockExplorers: {
-    default: { name: "RISE Explorer", url: "https://testnet.rise.trade" },
+    default: { name: "RISE Explorer", url: "https://explorer.testnet.riselabs.xyz" },
   },
   testnet: true,
 };
@@ -68,7 +68,7 @@ export const CHAINS: Record<number, ChainMeta> = {
     shortLabel: "RISE",
     iconKey: "rise",
     explorerTxUrl: (h) =>
-      `${process.env.NEXT_PUBLIC_RISE_EXPLORER_URL ?? "https://testnet.rise.trade"}/tx/${h}`,
+      `${process.env.NEXT_PUBLIC_RISE_EXPLORER_URL ?? "https://explorer.testnet.riselabs.xyz"}/tx/${h}`,
   },
 };
 
