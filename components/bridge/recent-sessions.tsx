@@ -79,7 +79,14 @@ function SessionRow({
 
   return (
     <button
-      onClick={() => setActiveSession(isActive ? null : session)}
+      onClick={() => {
+        // If already active and idle, toggle off. Otherwise always select.
+        if (isActive && session.status === "idle") {
+          setActiveSession(null);
+        } else {
+          setActiveSession(session);
+        }
+      }}
       className={cn(
         "flex items-center gap-2.5 px-3 py-2 rounded transition-all w-full text-left group",
         isActive

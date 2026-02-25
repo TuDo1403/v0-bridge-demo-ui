@@ -94,7 +94,8 @@ export function BridgePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Restore step + error whenever the active session changes (including on mount)
+  // Restore step + error whenever the active session changes (including on mount / click)
+  const sessionSelectedAt = useBridgeStore((s) => s.sessionSelectedAt);
   useEffect(() => {
     if (!activeSession) return;
 
@@ -143,7 +144,7 @@ export function BridgePanel() {
     // Default: form
     setStep("form");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession?.id, activeSession?.status]);
+  }, [activeSession?.id, activeSession?.status, sessionSelectedAt]);
 
   // Cleanup polling on unmount
   useEffect(() => {

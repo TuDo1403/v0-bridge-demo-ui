@@ -43,6 +43,8 @@ interface BridgeStore {
 
   // Active session
   activeSession: BridgeSession | null;
+  /** Incremented every time setActiveSession is called to force effect re-runs */
+  sessionSelectedAt: number;
   recentSessions: BridgeSession[];
 
   // Actions
@@ -76,6 +78,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   depositAddress: "",
 
   activeSession: null,
+  sessionSelectedAt: 0,
   recentSessions: [],
 
   setSourceChainId: (id) => set({ sourceChainId: id }),
@@ -129,7 +132,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
     set({ recentSessions: sessions, activeSession: updatedActive });
   },
 
-  setActiveSession: (session) => set({ activeSession: session }),
+  setActiveSession: (session) => set({ activeSession: session, sessionSelectedAt: Date.now() }),
 
   loadRecentSessions: () => {
     const sessions = loadSessions();
