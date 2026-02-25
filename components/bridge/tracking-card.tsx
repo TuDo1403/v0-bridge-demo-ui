@@ -53,6 +53,8 @@ function derivePhase(session: BridgeSession): TrackingPhase {
   const lz = session.lzTracking;
   if (session.status === "completed") return "complete";
   if (session.status === "error" || session.status === "failed") return "failed";
+  // Session was reset to idle but still has an error (e.g. after a failed retry)
+  if (session.error) return "failed";
 
   // Map backend job statuses
   if (session.status === "source_verified" || session.status === "bridge_submitted") return "waiting";
@@ -265,7 +267,7 @@ function ComposeBadge({ status, txHash, explorerUrl }: {
 
 export function TrackingCard({ session }: { session: BridgeSession }) {
   const { updateSession } = useBridgeStore();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(phase === "failed");
   const [pollCount, setPollCount] = useState(0);
 
   const phase = derivePhase(session);
@@ -344,6 +346,42 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
       <div className="px-4 pb-3">
         <PhaseProgressBar phase={phase} />
       </div>
+
+      {/* Error + retry: always visible for failed sessions */}
+      {phase === "failed" && (
+        <div className="px-4 pb-3 flex flex-col gap-2">
+          <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-[11px] font-mono text-destructive-foreground flex items-start gap-2">
+            <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <div>
+              {session.error ?? "The bridge transaction failed."}{" "}
+              {lz?.composeStatus === "FAILED" && (
+                <>Compose execution failed on the destination chain. </>
+              )}
+            </div>
+          </div>
+          {session.jobId && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="font-mono text-xs gap-1.5 self-start border-destructive/30 hover:bg-destructive/10"
+              onClick={async () => {
+                try {
+                  const res = await retryBridgeJob(session.jobId!);
+                  updateSession(session.id, {
+                    status: mapBackendStatus(res.status),
+                    error: undefined,
+                  });
+                } catch {
+                  // retry failed silently
+                }
+              }}
+            >
+              <RotateCcw className="h-3 w-3" />
+              Retry Bridge
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Expanded detail panel */}
       {expanded && (
@@ -463,41 +501,7 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             </div>
           )}
 
-          {/* Failed with retry */}
-          {phase === "failed" && (
-            <div className="flex flex-col gap-2">
-              <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-[11px] font-mono text-destructive-foreground flex items-start gap-2">
-                <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <div>
-                  {session.error ?? "The bridge transaction failed."}{" "}
-                  {lz?.composeStatus === "FAILED" && (
-                    <>Compose execution failed on the destination chain. </>
-                  )}
-                </div>
-              </div>
-              {session.jobId && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="font-mono text-xs gap-1.5 self-start"
-                  onClick={async () => {
-                    try {
-                      const res = await retryBridgeJob(session.jobId!);
-                      updateSession(session.id, {
-                        status: mapBackendStatus(res.status),
-                        error: undefined,
-                      });
-                    } catch {
-                      // retry failed silently
-                    }
-                  }}
-                >
-                  <RotateCcw className="h-3 w-3" />
-                  Retry Bridge
-                </Button>
-              )}
-            </div>
-          )}
+          {/* (Error + retry is shown above the expanded panel, always visible) */}
         </div>
       )}
     </div>

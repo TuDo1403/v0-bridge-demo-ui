@@ -103,11 +103,7 @@ export function StatusRail({ currentStatus, error }: StatusRailProps) {
         })}
       </div>
 
-      {isError && error && (
-        <div className="mt-2 px-3 py-2 bg-destructive/10 border border-destructive/20 rounded text-[11px] font-mono text-destructive-foreground leading-relaxed">
-          {error}
-        </div>
-      )}
+      {/* Error message is shown in the TrackingCard, not duplicated here */}
     </div>
   );
 }

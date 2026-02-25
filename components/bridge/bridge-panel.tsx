@@ -483,11 +483,15 @@ export function BridgePanel() {
   // --- Render ---
   return (
     <div className="flex flex-col gap-4">
-      {/* Status rail - visible when session has progressed past idle */}
-      {activeSession && activeSession.status !== "idle" && activeSession.status !== "awaiting_transfer" && (
+      {/* Status rail - visible when session has progressed past idle, or has a jobId/error */}
+      {activeSession && (
+        activeSession.status !== "idle" ||
+        activeSession.jobId ||
+        activeSession.error
+      ) && activeSession.status !== "awaiting_transfer" && (
         <div className="p-3 rounded-lg border border-border bg-card">
           <StatusRail
-            currentStatus={currentStatus}
+            currentStatus={activeSession.error && currentStatus === "idle" ? "error" : currentStatus}
             error={activeSession.error ?? error ?? undefined}
           />
         </div>
@@ -937,94 +941,24 @@ export function BridgePanel() {
 
       {/* --- SESSION TRACKING VIEW --- */}
       {/* Purely data-driven: no dependency on local `step` state.
-          Clicking a recent session always shows tracking + retry. */}
+          TrackingCard handles its own error display + retry button internally. */}
       {showTrackingView && activeSession && (
         <div className="flex flex-col gap-4">
           <TrackingCard session={activeSession} />
 
-          {/* Error/failed: prominent retry -- also show when session has error field regardless of status */}
-          {(activeSession.status === "error" || activeSession.status === "failed" || activeSession.error) && (
-            <div className="flex flex-col gap-3 p-4 rounded-lg border border-destructive/30 bg-destructive/5">
-              <div className="flex items-start gap-2 text-xs font-mono text-destructive-foreground">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{error || activeSession.error || "Bridge job failed."}</span>
-              </div>
-              <div className="flex gap-2">
-                {activeSession.jobId && (
-                  <Button
-                    variant="outline"
-                    onClick={handleRetry}
-                    className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Retry Bridge Job
-                  </Button>
-                )}
-                {!activeSession.jobId && activeSession.userTransferTxHash && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setError(null);
-                      handlePostMine();
-                    }}
-                    className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Retry Processing
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setError(null);
-                    // Deselect the failed session and reset to a fresh form
-                    setActiveSession(null);
-                    setStep("form");
-                    resetForm();
-                  }}
-                  className="h-10 font-mono text-sm gap-2 text-muted-foreground"
-                >
-                  Start Over
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* In-progress: subtle nudge retry */}
-          {activeSession.jobId &&
-            activeSession.status !== "error" &&
-            activeSession.status !== "failed" &&
-            activeSession.status !== "completed" && (
-            <Button
-              variant="ghost"
-              onClick={async () => {
-                try {
-                  const res = await retryBridgeJob(activeSession.jobId!);
-                  updateSession(activeSession.id, {
-                    status: mapBackendStatus(res.status),
-                    error: undefined,
-                  });
-                } catch (err) {
-                  const errMsg = err instanceof Error ? err.message : "Retry failed";
-                  setError(errMsg);
-                }
-              }}
-              className="h-9 font-mono text-[11px] gap-1.5 text-muted-foreground hover:text-foreground self-center"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Nudge Backend
-            </Button>
-          )}
-
-          {/* Completed: new bridge button */}
-          {activeSession.status === "completed" && (
-            <Button
-              onClick={handleRetry}
-              className="h-10 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              New Bridge
-            </Button>
-          )}
+          {/* New bridge button below tracking */}
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setError(null);
+              setActiveSession(null);
+              setStep("form");
+              resetForm();
+            }}
+            className="h-9 font-mono text-[11px] gap-1.5 text-muted-foreground hover:text-foreground self-center"
+          >
+            New Bridge
+          </Button>
         </div>
       )}
     </div>
