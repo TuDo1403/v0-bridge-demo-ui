@@ -35,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChainIcon } from "./chain-icon";
+import { ChainIcon, TokenIcon } from "./chain-icon";
 import { StatusRail } from "./status-rail";
 import { TrackingCard } from "./tracking-card";
 import { TxBadge } from "./tx-badge";
@@ -397,10 +397,7 @@ export function BridgePanel() {
                 onValueChange={(v) => setSourceChainId(Number(v))}
               >
                 <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
-                  <div className="flex items-center gap-2">
-                    <ChainIcon chainKey={sourceChain?.iconKey} className="h-4 w-4 text-foreground" />
-                    <SelectValue />
-                  </div>
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {BRIDGE_ROUTES.map((r) => {
@@ -412,7 +409,7 @@ export function BridgePanel() {
                         className="font-mono text-sm"
                       >
                         <span className="flex items-center gap-2">
-                          <ChainIcon chainKey={meta?.iconKey} className="h-3.5 w-3.5" />
+                          <ChainIcon chainKey={meta?.iconKey} className="h-4 w-4" />
                           {meta?.label}
                         </span>
                       </SelectItem>
@@ -425,7 +422,7 @@ export function BridgePanel() {
                 value={tokenKey}
                 onValueChange={setTokenKey}
               >
-                <SelectTrigger className="w-full sm:w-32 bg-muted/50 font-mono text-sm">
+                <SelectTrigger className="w-full sm:w-36 bg-muted/50 font-mono text-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -435,7 +432,10 @@ export function BridgePanel() {
                       value={k}
                       className="font-mono text-sm"
                     >
-                      {TOKENS[k].symbol}
+                      <span className="flex items-center gap-2">
+                        <TokenIcon tokenKey={k} className="h-4 w-4" />
+                        {TOKENS[k].symbol}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -524,10 +524,7 @@ export function BridgePanel() {
               onValueChange={(v) => setDestChainId(Number(v))}
             >
               <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
-                <div className="flex items-center gap-2">
-                  <ChainIcon chainKey={destChain?.iconKey} className="h-4 w-4 text-foreground" />
-                  <SelectValue />
-                </div>
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {BRIDGE_ROUTES.map((r) => {
@@ -539,7 +536,7 @@ export function BridgePanel() {
                       className="font-mono text-sm"
                     >
                       <span className="flex items-center gap-2">
-                        <ChainIcon chainKey={meta?.iconKey} className="h-3.5 w-3.5" />
+                        <ChainIcon chainKey={meta?.iconKey} className="h-4 w-4" />
                         {meta?.label}
                       </span>
                     </SelectItem>
