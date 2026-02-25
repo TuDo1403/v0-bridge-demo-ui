@@ -117,11 +117,12 @@ export function BridgePanel() {
     functionName: "balanceOf",
     args: address ? [address] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !!address && !!tokenAddress },
+    query: { enabled: !!address && !!tokenAddress, retry: 3, retryDelay: 2000 },
   });
 
+  // walletBalance can be 0n which is falsy, so check explicitly for undefined/null
   const formattedWalletBalance =
-    walletBalance !== undefined && token
+    walletBalance !== undefined && walletBalance !== null && token
       ? formatUnits(walletBalance, token.decimals)
       : null;
 
@@ -137,14 +138,21 @@ export function BridgePanel() {
     functionName: "computeDepositAddress",
     args: address ? [address] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !!address && !!globalDepositAddr },
+    query: { enabled: !!address && !!globalDepositAddr, retry: 3, retryDelay: 2000 },
   });
 
   useEffect(() => {
     if (computedDepositAddr) {
+      console.log("[v0] computeDepositAddress result:", computedDepositAddr);
       setDepositAddress(computedDepositAddr as string);
     }
   }, [computedDepositAddr, setDepositAddress]);
+
+  useEffect(() => {
+    if (isComputeError) {
+      console.log("[v0] computeDepositAddress ERROR - contract:", globalDepositAddr, "user:", address, "chainId:", sourceChainId);
+    }
+  }, [isComputeError, globalDepositAddr, address, sourceChainId]);
 
   // --- Check deposit address balance ---
   const { data: depositBalance, refetch: refetchBalance } = useReadContract({
@@ -153,7 +161,7 @@ export function BridgePanel() {
     functionName: "balanceOf",
     args: depositAddress ? [depositAddress as Address] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !!depositAddress && !!tokenAddress && step === "transfer" },
+    query: { enabled: !!depositAddress && !!tokenAddress && step === "transfer", retry: 3, retryDelay: 2000 },
   });
 
   // --- Token transfer ---

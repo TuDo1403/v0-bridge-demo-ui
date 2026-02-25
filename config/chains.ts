@@ -4,12 +4,18 @@ import { type Chain } from "viem";
 /*  Chain definitions                                                  */
 /* ------------------------------------------------------------------ */
 
+export const SEPOLIA_RPC_URLS = [
+  "https://ethereum-sepolia-rpc.publicnode.com",
+  "https://rpc2.sepolia.org",
+  "https://rpc.sepolia.org",
+];
+
 export const sepoliaChain: Chain = {
   id: 11155111,
   name: "Sepolia",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
-    default: { http: ["https://rpc.sepolia.org"] },
+    default: { http: [SEPOLIA_RPC_URLS[0]] },
   },
   blockExplorers: {
     default: { name: "Etherscan", url: "https://sepolia.etherscan.io" },
@@ -17,12 +23,15 @@ export const sepoliaChain: Chain = {
   testnet: true,
 };
 
+export const RISE_TESTNET_RPC_URL =
+  process.env.NEXT_PUBLIC_RISE_RPC_URL ?? "https://testnet.riselabs.xyz";
+
 export const riseTestnetChain: Chain = {
   id: 11155931,
   name: "RISE Testnet",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
-    default: { http: ["https://testnet.riselabs.xyz"] },
+    default: { http: [RISE_TESTNET_RPC_URL] },
   },
   blockExplorers: {
     default: { name: "RISE Explorer", url: "https://testnet.rise.trade" },
