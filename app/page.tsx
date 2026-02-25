@@ -1,9 +1,4 @@
-import dynamic from "next/dynamic";
-
-const BridgeDashboard = dynamic(
-  () => import("@/components/bridge/bridge-dashboard").then((m) => m.BridgeDashboard),
-  { ssr: false }
-);
+import { BridgeDashboard } from "@/components/bridge/bridge-dashboard";
 
 export default function Home() {
   return <BridgeDashboard />;
