@@ -19,6 +19,7 @@ function DataRow({
   onRetry,
   highlight = false,
   iconKey,
+  href,
 }: {
   label: string;
   value: string;
@@ -28,7 +29,15 @@ function DataRow({
   onRetry?: () => void;
   highlight?: boolean;
   iconKey?: string;
+  href?: string;
 }) {
+  const valueClasses = cn(
+    "text-xs truncate flex items-center gap-1.5",
+    mono ? "font-mono" : "font-sans",
+    highlight ? "text-primary" : "text-foreground",
+    href && "underline decoration-muted-foreground/40 underline-offset-2 hover:text-primary hover:decoration-primary transition-colors cursor-pointer"
+  );
+
   return (
     <div className="flex items-center justify-between gap-2 py-1.5">
       <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">
@@ -45,14 +54,18 @@ function DataRow({
           retry
           <RefreshCcw className="h-2.5 w-2.5" />
         </button>
-      ) : (
-        <span
-          className={cn(
-            "text-xs truncate flex items-center gap-1.5",
-            mono ? "font-mono" : "font-sans",
-            highlight ? "text-primary" : "text-foreground"
-          )}
+      ) : href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={valueClasses}
         >
+          {iconKey && <ChainIcon chainKey={iconKey} className="h-3.5 w-3.5 shrink-0" />}
+          {value}
+        </a>
+      ) : (
+        <span className={valueClasses}>
           {iconKey && <ChainIcon chainKey={iconKey} className="h-3.5 w-3.5 shrink-0" />}
           {value}
         </span>
@@ -221,6 +234,7 @@ export function InfoPanel() {
           <DataRow
             label="Contract"
             value={`${globalDepositAddr.slice(0, 8)}...${globalDepositAddr.slice(-6)}`}
+            href={`${sourceChain?.blockExplorers?.default?.url ?? "https://sepolia.etherscan.io"}/address/${globalDepositAddr}`}
           />
         )}
       </div>
