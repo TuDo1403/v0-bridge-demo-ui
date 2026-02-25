@@ -15,10 +15,18 @@ export async function POST(request: Request) {
       );
     }
 
-    // Forward optional composer/composeMsg if provided (backend may need them for retry)
+    // Always forward composer/composeMsg in the body
     const retryBody: Record<string, string> = {};
     if (body.composer) retryBody.composer = body.composer;
     if (body.composeMsg) retryBody.composeMsg = body.composeMsg;
+
+    console.log("[bridge/retry] Sending to backend:", {
+      jobId,
+      hasComposer: !!retryBody.composer,
+      hasComposeMsg: !!retryBody.composeMsg,
+      composerLen: retryBody.composer?.length,
+      composeMsgLen: retryBody.composeMsg?.length,
+    });
 
     const res = await fetch(
       `${BRIDGE_API}/v1/bridge/retry/${encodeURIComponent(jobId)}`,
@@ -26,13 +34,9 @@ export async function POST(request: Request) {
         method: "POST",
         headers: {
           "X-API-Key": API_KEY,
-          ...(Object.keys(retryBody).length > 0
-            ? { "Content-Type": "application/json" }
-            : {}),
+          "Content-Type": "application/json",
         },
-        ...(Object.keys(retryBody).length > 0
-          ? { body: JSON.stringify(retryBody) }
-          : {}),
+        body: JSON.stringify(retryBody),
       }
     );
 

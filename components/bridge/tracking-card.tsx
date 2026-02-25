@@ -270,6 +270,8 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
   const phase = derivePhase(session);
   const [expanded, setExpanded] = useState(phase === "failed");
   const [pollCount, setPollCount] = useState(0);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const lz = session.lzTracking;
   const sourceChain = CHAINS[session.sourceChainId];
   const destChain = CHAINS[session.destChainId];
@@ -359,26 +361,48 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             </div>
           </div>
           {session.jobId && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="font-mono text-xs gap-1.5 self-start border-destructive/30 hover:bg-destructive/10"
-              onClick={async () => {
-                try {
-                  const composeData = buildComposeData(session);
-                  const res = await retryBridgeJob(session.jobId!, composeData);
-                  updateSession(session.id, {
-                    status: mapBackendStatus(res.status),
-                    error: undefined,
-                  });
-                } catch {
-                  // retry failed silently
-                }
-              }}
-            >
-              <RotateCcw className="h-3 w-3" />
-              Retry Bridge
-            </Button>
+            <div className="flex flex-col gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={retrying}
+                className="font-mono text-xs gap-1.5 self-start border-destructive/30 hover:bg-destructive/10"
+                onClick={async () => {
+                  setRetrying(true);
+                  setRetryError(null);
+                  try {
+                    const composeData = buildComposeData(session);
+                    console.log("[v0] Retry with compose data:", {
+                      composer: composeData.composer.slice(0, 10) + "...",
+                      composeMsgLen: composeData.composeMsg.length,
+                    });
+                    const res = await retryBridgeJob(session.jobId!, composeData);
+                    updateSession(session.id, {
+                      status: mapBackendStatus(res.status),
+                      error: undefined,
+                    });
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "Retry failed";
+                    console.error("[v0] Retry error:", msg);
+                    setRetryError(msg);
+                  } finally {
+                    setRetrying(false);
+                  }
+                }}
+              >
+                {retrying ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3 w-3" />
+                )}
+                {retrying ? "Retrying..." : "Retry Bridge"}
+              </Button>
+              {retryError && (
+                <span className="text-[10px] font-mono text-destructive-foreground px-1">
+                  {retryError}
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}
