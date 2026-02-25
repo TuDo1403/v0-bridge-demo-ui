@@ -48,19 +48,21 @@ function dig(obj: any, ...keys: string[]): unknown {
 }
 
 /**
- * Try to decode amount from OFT payload.
- * Standard OFT payload: abi.encode(address to, uint256 amountSD)
- * The amount is the second 32-byte word (bytes 32-64).
+ * Decode amount from OFT v2 message payload.
+ * OFT payload layout:
+ *   bytes32 to        (32 bytes = 64 hex chars) -- receiver address left-padded
+ *   uint64  amountSD  ( 8 bytes = 16 hex chars) -- amount in shared decimals
  */
 function tryDecodeOftAmount(payload?: string): bigint | undefined {
-  if (!payload || payload.length < 130) return undefined; // 0x + 64 + 64 = 130 min
+  if (!payload) return undefined;
   try {
     const hex = payload.startsWith("0x") ? payload.slice(2) : payload;
-    // Second 32-byte word (chars 64-128) = amount
-    const amountHex = hex.slice(64, 128);
-    if (!amountHex || amountHex.length !== 64) return undefined;
-    const val = BigInt("0x" + amountHex);
-    return val;
+    // Need at least 32 + 8 bytes = 80 hex chars
+    if (hex.length < 80) return undefined;
+    // uint64 amountSD sits at byte offset 32, length 8 bytes = hex chars 64..80
+    const amountHex = hex.slice(64, 80);
+    if (!amountHex || amountHex.length !== 16) return undefined;
+    return BigInt("0x" + amountHex);
   } catch {
     return undefined;
   }
