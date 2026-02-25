@@ -94,6 +94,15 @@ export function BridgePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restore error + step from persisted session on mount
+  useEffect(() => {
+    if (activeSession && (activeSession.status === "error" || activeSession.status === "failed")) {
+      setError(activeSession.error ?? "Bridge transaction failed.");
+      // Keep step as "form" so the retry panel in the form view is visible
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession?.id]);
+
   // Resume polling if active session is in a polling state
   useEffect(() => {
     if (
@@ -692,14 +701,14 @@ export function BridgePanel() {
           )}
 
           {/* Error banner + retry for failed backend processing */}
-          {activeSession && (activeSession.status === "error" || activeSession.status === "failed") && error && (
+          {activeSession && (activeSession.status === "error" || activeSession.status === "failed") && (error || activeSession.error) && (
             <div className="flex flex-col gap-3 p-4 rounded-lg border border-destructive/30 bg-destructive/5">
               <div className="flex items-start gap-2 text-xs font-mono text-destructive-foreground">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{error}</span>
+                <span>{error || activeSession.error || "Bridge transaction failed."}</span>
               </div>
               <div className="flex gap-2">
-                {activeSession.jobId && (
+                {activeSession.jobId ? (
                   <Button
                     variant="outline"
                     onClick={handleRetry}
@@ -708,8 +717,7 @@ export function BridgePanel() {
                     <RotateCcw className="h-3.5 w-3.5" />
                     Retry Bridge Job
                   </Button>
-                )}
-                {!activeSession.jobId && activeSession.userTransferTxHash && (
+                ) : activeSession.userTransferTxHash ? (
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -721,7 +729,7 @@ export function BridgePanel() {
                     <RotateCcw className="h-3.5 w-3.5" />
                     Retry Processing
                   </Button>
-                )}
+                ) : null}
                 <Button
                   variant="ghost"
                   onClick={() => {
