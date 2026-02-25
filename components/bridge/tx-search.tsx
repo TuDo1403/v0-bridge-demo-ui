@@ -37,41 +37,92 @@ import {
 /*  Parse raw API message into our LzTrackingData shape                */
 /* ------------------------------------------------------------------ */
 
-function parseApiMessage(msg: Record<string, unknown>): LzTrackingData {
-  const pathway = msg?.pathway as Record<string, unknown> | undefined;
-  const srcChain = (pathway?.srcChain ?? msg?.srcChainId) as number | undefined;
-  const dstChain = (pathway?.dstChain ?? msg?.dstChainId) as number | undefined;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function dig(obj: any, ...keys: string[]): unknown {
+  let cur = obj;
+  for (const k of keys) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = cur[k];
+  }
+  return cur;
+}
 
-  // Compose
-  let composeStatus = "UNKNOWN";
-  let composeTx: string | undefined;
-  const lzCompose = (pathway?.lzCompose ?? msg?.lzCompose) as Record<string, unknown> | undefined;
-  if (lzCompose) {
-    composeStatus = ((lzCompose.status as string) ?? "UNKNOWN").toUpperCase();
-    composeTx = lzCompose.txHash as string | undefined;
-  }
-  if (msg?.lzComposeStatus) {
-    composeStatus = (msg.lzComposeStatus as string).toUpperCase();
-    composeTx = (msg.lzComposeTxHash as string) ?? composeTx;
-  }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseApiMessage(msg: any): LzTrackingData {
+  /*
+   * Real LZ Scan response shape (v1/messages/tx):
+   * {
+   *   pathway: { srcEid, dstEid, sender: { address, chain }, receiver: { address, chain }, nonce },
+   *   source: { status, tx: { txHash, blockTimestamp, from, ... } },
+   *   destination: { status, tx: { txHash, blockTimestamp, ... }, lzCompose: { status }, nativeDrop: { status } },
+   *   verification: { ... },
+   *   guid: ...  (sometimes at top level, sometimes in pathway.id)
+   * }
+   *
+   * Older / alternative flat shape:
+   * { status, srcTxHash, dstTxHash, srcEid, dstEid, sender, receiver, guid, ... }
+   */
+
+  const pathway = msg?.pathway;
+  const source = msg?.source;
+  const destination = msg?.destination;
+
+  // -- Status: derive from destination.status > source.status > top-level status
+  const dstStatus = (dig(destination, "status") as string) ?? undefined;
+  const srcStatus = (dig(source, "status") as string) ?? undefined;
+  const topStatus = msg?.status as string | undefined;
+  // If dst SUCCEEDED -> DELIVERED, if src SUCCEEDED but no dst -> INFLIGHT, etc.
+  let resolvedStatus: string;
+  if (dstStatus === "SUCCEEDED") resolvedStatus = "DELIVERED";
+  else if (dstStatus === "FAILED") resolvedStatus = "FAILED";
+  else if (srcStatus === "SUCCEEDED" && !dstStatus) resolvedStatus = "INFLIGHT";
+  else if (srcStatus === "SUCCEEDED" && dstStatus) resolvedStatus = dstStatus;
+  else resolvedStatus = topStatus ?? srcStatus ?? "PENDING";
+
+  // -- Tx hashes
+  const srcTxHash = (dig(source, "tx", "txHash") ?? msg?.srcTxHash ?? msg?.srcUaTxHash) as string | undefined;
+  const dstTxHash = (dig(destination, "tx", "txHash") ?? msg?.dstTxHash ?? msg?.dstUaTxHash) as string | undefined;
+
+  // -- EIDs
+  const srcEid = (dig(pathway, "srcEid") ?? msg?.srcEid) as number | undefined;
+  const dstEid = (dig(pathway, "dstEid") ?? msg?.dstEid) as number | undefined;
+
+  // -- Addresses
+  const senderAddr = (dig(pathway, "sender", "address") ?? msg?.srcUaAddress ?? msg?.sender) as string | undefined;
+  const receiverAddr = (dig(pathway, "receiver", "address") ?? msg?.dstUaAddress ?? msg?.receiver) as string | undefined;
+
+  // -- GUID
+  const guid = (msg?.guid ?? dig(pathway, "id")) as string | undefined;
+
+  // -- Compose
+  const lzCompose = dig(destination, "lzCompose") as Record<string, unknown> | undefined;
+  const composeStatus = ((lzCompose?.status as string) ?? msg?.lzComposeStatus ?? "UNKNOWN").toUpperCase();
+  const composeTx = (lzCompose?.txHash ?? msg?.lzComposeTxHash) as string | undefined;
+
+  // -- Timestamps
+  const created = (dig(source, "tx", "blockTimestamp") ?? msg?.created) as number | undefined;
+  const updated = (dig(destination, "tx", "blockTimestamp") ?? msg?.updated) as number | undefined;
 
   return {
-    status: normalizeLzStatus(msg?.status as string),
-    guid: (msg?.guid as string) ?? undefined,
-    srcTxHash: (msg?.srcTxHash ?? msg?.srcUaTxHash) as string | undefined,
-    srcChainId: srcChain,
-    srcEid: (msg?.srcEid ?? (pathway?.sender as Record<string, unknown>)?.eid) as number | undefined,
-    srcUaAddress: (msg?.srcUaAddress ?? (pathway?.sender as Record<string, unknown>)?.address) as string | undefined,
-    dstTxHash: (msg?.dstTxHash ?? msg?.dstUaTxHash) as string | undefined,
-    dstChainId: dstChain,
-    dstEid: (msg?.dstEid ?? (pathway?.receiver as Record<string, unknown>)?.eid) as number | undefined,
-    dstUaAddress: (msg?.dstUaAddress ?? (pathway?.receiver as Record<string, unknown>)?.address) as string | undefined,
-    sender: (msg?.sender ?? msg?.srcUaAddress) as string | undefined,
-    receiver: (msg?.receiver ?? msg?.dstUaAddress) as string | undefined,
-    compose: { status: composeStatus as "SUCCEEDED" | "FAILED" | "NOT_EXECUTED" | "UNKNOWN", txHash: composeTx },
-    rawStatus: (msg?.status as string) ?? undefined,
-    created: (msg?.created as number) ?? undefined,
-    updated: (msg?.updated as number) ?? undefined,
+    status: normalizeLzStatus(resolvedStatus),
+    guid,
+    srcTxHash,
+    srcChainId: undefined,
+    srcEid,
+    srcUaAddress: senderAddr,
+    dstTxHash,
+    dstChainId: undefined,
+    dstEid,
+    dstUaAddress: receiverAddr,
+    sender: senderAddr,
+    receiver: receiverAddr,
+    compose: {
+      status: composeStatus as "SUCCEEDED" | "FAILED" | "NOT_EXECUTED" | "UNKNOWN",
+      txHash: composeTx,
+    },
+    rawStatus: resolvedStatus,
+    created,
+    updated,
   };
 }
 
