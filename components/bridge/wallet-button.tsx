@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { CHAINS } from "@/config/chains";
 import { Wallet, LogOut, Copy, Check } from "lucide-react";
 import { useState } from "react";
 
@@ -16,10 +17,11 @@ function truncateAddress(addr: string) {
 }
 
 export function WalletButton() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
   const [copied, setCopied] = useState(false);
+  const chainMeta = chainId ? CHAINS[chainId] : null;
 
   if (!isConnected) {
     return (
@@ -45,7 +47,12 @@ export function WalletButton() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" className="font-mono text-sm gap-2">
-          <span className="h-2 w-2 rounded-full bg-success" />
+          <span className="h-2 w-2 rounded-full bg-success shrink-0" />
+          {chainMeta && (
+            <span className="text-muted-foreground text-[10px] hidden sm:inline">
+              {chainMeta.shortLabel}
+            </span>
+          )}
           {truncateAddress(address!)}
         </Button>
       </DropdownMenuTrigger>

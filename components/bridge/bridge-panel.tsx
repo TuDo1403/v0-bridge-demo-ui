@@ -110,8 +110,28 @@ export function BridgePanel() {
   const tokenAddress = getTokenAddress(tokenKey, sourceChainId);
   const token = TOKENS[tokenKey];
 
+  // --- Read user wallet token balance ---
+  const { data: walletBalance, isLoading: isBalanceLoading } = useReadContract({
+    address: tokenAddress,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !!address && !!tokenAddress },
+  });
+
+  const formattedWalletBalance =
+    walletBalance !== undefined && token
+      ? formatUnits(walletBalance, token.decimals)
+      : null;
+
   // --- Compute deposit address from contract ---
-  const { data: computedDepositAddr } = useReadContract({
+  const {
+    data: computedDepositAddr,
+    isLoading: isComputingDeposit,
+    isError: isComputeError,
+    refetch: retryComputeDeposit,
+  } = useReadContract({
     address: globalDepositAddr,
     abi: riseGlobalDepositAbi,
     functionName: "computeDepositAddress",
@@ -381,19 +401,62 @@ export function BridgePanel() {
               </Select>
             </div>
 
+            {/* Balance display */}
+            {isConnected && (
+              <div className="mt-3 flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                  Balance
+                </span>
+                <span className="text-xs font-mono text-foreground">
+                  {isBalanceLoading ? (
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Loading...
+                    </span>
+                  ) : formattedWalletBalance !== null ? (
+                    <button
+                      type="button"
+                      onClick={() => setAmount(formattedWalletBalance)}
+                      className="hover:text-primary transition-colors cursor-pointer"
+                      title="Use max balance"
+                    >
+                      {Number(formattedWalletBalance).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 6,
+                      })}{" "}
+                      {token?.symbol}
+                    </button>
+                  ) : (
+                    <span className="text-muted-foreground">--</span>
+                  )}
+                </span>
+              </div>
+            )}
+
             {/* Amount input */}
-            <div className="mt-3">
-              <Input
-                type="text"
-                inputMode="decimal"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/[^0-9.]/g, "");
-                  setAmount(val);
-                }}
-                className="font-mono text-lg bg-muted/30 border-border h-12"
-              />
+            <div className="mt-2">
+              <div className="relative">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/[^0-9.]/g, "");
+                    setAmount(val);
+                  }}
+                  className="font-mono text-lg bg-muted/30 border-border h-12 pr-16"
+                />
+                {formattedWalletBalance && Number(formattedWalletBalance) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAmount(formattedWalletBalance)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono uppercase tracking-wider text-primary hover:text-primary/80 transition-colors px-2 py-1 rounded bg-primary/10"
+                  >
+                    Max
+                  </button>
+                )}
+              </div>
               {isDustWarning && (
                 <div className="flex items-center gap-1.5 mt-1.5 text-[11px] font-mono text-warning">
                   <AlertTriangle className="h-3 w-3" />
@@ -437,26 +500,75 @@ export function BridgePanel() {
           </div>
 
           {/* Deposit address preview */}
-          {depositAddress && (
+          {isConnected && (
             <div className="p-3 rounded-lg border border-border bg-muted/20">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
                   Deposit Address
                 </span>
-                <button
-                  onClick={handleCopyDeposit}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {depositCopied ? (
-                    <Check className="h-3 w-3" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </button>
+                {depositAddress && (
+                  <button
+                    onClick={handleCopyDeposit}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {depositCopied ? (
+                      <Check className="h-3 w-3" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </button>
+                )}
               </div>
-              <p className="font-mono text-xs text-foreground break-all leading-relaxed">
-                {depositAddress}
-              </p>
+              {isComputingDeposit ? (
+                <div className="flex items-center gap-2 py-1">
+                  <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                  <span className="font-mono text-xs text-muted-foreground">
+                    Computing deposit address...
+                  </span>
+                </div>
+              ) : isComputeError ? (
+                <div className="flex items-center justify-between py-1">
+                  <span className="font-mono text-xs text-destructive-foreground">
+                    Failed to compute address
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => retryComputeDeposit()}
+                    className="h-6 px-2 text-[10px] font-mono gap-1"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Retry
+                  </Button>
+                </div>
+              ) : depositAddress ? (
+                <p className="font-mono text-xs text-foreground break-all leading-relaxed">
+                  {depositAddress}
+                </p>
+              ) : (
+                <span className="font-mono text-xs text-muted-foreground">
+                  Connect wallet to compute
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Chain mismatch warning */}
+          {isConnected && walletChainId !== sourceChainId && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded bg-warning/10 border border-warning/20 text-xs font-mono text-warning">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span>
+                Wrong network. Please switch to{" "}
+                {sourceChain?.label ?? "source chain"}.
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => switchChain({ chainId: sourceChainId })}
+                className="h-6 px-2 text-[10px] font-mono ml-auto text-warning hover:text-warning"
+              >
+                Switch
+              </Button>
             </div>
           )}
 
@@ -467,15 +579,27 @@ export function BridgePanel() {
               !isConnected ||
               !amount ||
               parseFloat(amount) <= 0 ||
-              !depositAddress
+              !depositAddress ||
+              isComputingDeposit
             }
             className="h-12 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            {!isConnected
-              ? "Connect Wallet First"
-              : !depositAddress
-                ? "Computing Deposit Address..."
-                : "Initiate Bridge"}
+            {!isConnected ? (
+              "Connect Wallet First"
+            ) : isComputingDeposit ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Computing Deposit Address...
+              </span>
+            ) : isComputeError ? (
+              "Deposit Address Error -- Retry Above"
+            ) : !depositAddress ? (
+              "Waiting for Deposit Address..."
+            ) : !amount || parseFloat(amount) <= 0 ? (
+              "Enter Amount"
+            ) : (
+              `Bridge ${amount} ${token?.symbol}`
+            )}
           </Button>
         </div>
       )}
