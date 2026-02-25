@@ -49,12 +49,20 @@ type TrackingPhase =
   | "complete"      // everything done
   | "failed";       // LZ or compose error
 
+function isComposeFailed(session: BridgeSession): boolean {
+  const cs = session.lzTracking?.composeStatus?.toLowerCase() ?? "";
+  if (cs.includes("fail") || cs.includes("revert")) return true;
+  // Also detect from error message if composeStatus wasn't stored
+  if (session.error?.toLowerCase().includes("compose")) return true;
+  return false;
+}
+
 function derivePhase(session: BridgeSession): TrackingPhase {
   const lz = session.lzTracking;
 
   // Check compose failure FIRST -- backend may report "completed" even when
   // lzCompose reverted on the destination chain.
-  if (lz?.composeStatus === "FAILED" || lz?.composeStatus === "failed") return "failed";
+  if (isComposeFailed(session)) return "failed";
 
   if (session.status === "completed") return "complete";
   if (session.status === "error" || session.status === "failed") return "failed";
@@ -72,8 +80,9 @@ function derivePhase(session: BridgeSession): TrackingPhase {
   }
   if (lz.lzStatus === "lz_failed" || lz.lzStatus === "lz_blocked" || lz.lzStatus === "failed") return "failed";
   if (lz.lzStatus === "lz_delivered" || lz.lzStatus === "completed") {
-    if (lz.composeStatus === "SUCCEEDED" || lz.composeStatus === "completed") return "complete";
-    if (lz.composeStatus === "FAILED" || lz.composeStatus === "failed") return "failed";
+    if (isComposeFailed(session)) return "failed";
+    const cs = lz.composeStatus?.toLowerCase() ?? "";
+    if (cs.includes("succeed") || cs === "executed" || cs === "completed") return "complete";
     return "verifying";
   }
   if (lz.lzStatus === "lz_inflight" || lz.lzStatus === "lz_pending") return "inflight";
@@ -359,10 +368,10 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
           <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-[11px] font-mono text-destructive-foreground flex items-start gap-2">
             <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
             <div>
-              {session.error ?? "The bridge transaction failed."}{" "}
-              {lz?.composeStatus === "FAILED" && (
-                <>Compose execution failed on the destination chain. </>
-              )}
+              {isComposeFailed(session) && !session.error
+                ? "lzCompose failed on the destination chain. The compose execution reverted."
+                : (session.error ?? "The bridge transaction failed.")
+              }
             </div>
           </div>
           {session.jobId && (

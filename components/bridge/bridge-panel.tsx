@@ -404,19 +404,29 @@ export function BridgePanel() {
           const res = await pollBridgeStatus(jobId);
           const mappedStatus = mapBackendStatus(res.status);
 
+          // Normalize compose status from backend to match LZ Scan conventions
+          // Backend may return: "executed", "failed", "reverted", null, etc.
+          const rawCompose = res.composeStatus?.toLowerCase() ?? "";
+          const normalizedComposeStatus = rawCompose.includes("fail") || rawCompose.includes("revert")
+            ? "FAILED"
+            : rawCompose === "executed" || rawCompose.includes("succeed") || rawCompose.includes("success")
+              ? "SUCCEEDED"
+              : rawCompose === "not_executed"
+                ? "NOT_EXECUTED"
+                : res.composeStatus ?? undefined;
+
           const sessionUpdates: Partial<BridgeSession> = {
             status: mappedStatus,
             backendProcessTxHash: res.backendProcessTxHash ?? undefined,
             lzMessageId: res.lzMessageId ?? undefined,
             destinationTxHash: res.destinationTxHash ?? undefined,
             error: res.error ?? undefined,
-            // Store compose and amount info from the real API
             lzTracking: {
               guid: res.lzMessageId ?? undefined,
               lzStatus: res.status,
               srcTxHash: res.userTransferTxHash,
               dstTxHash: res.destinationTxHash ?? undefined,
-              composeStatus: res.composeStatus ?? undefined,
+              composeStatus: normalizedComposeStatus,
               composeTxHash: res.composeTxHash ?? undefined,
               sender: res.sender ?? undefined,
               receiver: res.receiver,
@@ -430,8 +440,7 @@ export function BridgePanel() {
             pollingRef.current = null;
 
             // Compose can fail even when the backend reports "completed"
-            const composeFailed =
-              res.composeStatus === "FAILED" || res.composeStatus === "failed";
+            const composeFailed = normalizedComposeStatus === "FAILED";
 
             if (composeFailed) {
               setError("lzCompose failed on destination chain. You can retry the compose execution.");
@@ -549,19 +558,21 @@ export function BridgePanel() {
         activeSession.status !== "awaiting_transfer" && (
         <div className="p-3 rounded-lg border border-border bg-card">
           <StatusRail
-            currentStatus={
-              // Compose failure overrides "completed" -> show as failed
-              (activeSession.lzTracking?.composeStatus === "FAILED" || activeSession.lzTracking?.composeStatus === "failed")
-                ? "failed"
-                : activeSession.error && currentStatus === "idle"
-                  ? "error"
-                  : currentStatus
-            }
-            error={
-              (activeSession.lzTracking?.composeStatus === "FAILED" || activeSession.lzTracking?.composeStatus === "failed")
-                ? "lzCompose failed on destination chain"
-                : activeSession.error ?? error ?? undefined
-            }
+            currentStatus={(() => {
+              const cs = activeSession.lzTracking?.composeStatus?.toLowerCase() ?? "";
+              const composeFailed = cs.includes("fail") || cs.includes("revert") ||
+                activeSession.error?.toLowerCase().includes("compose");
+              if (composeFailed) return "failed" as const;
+              if (activeSession.error && currentStatus === "idle") return "error" as const;
+              return currentStatus;
+            })()}
+            error={(() => {
+              const cs = activeSession.lzTracking?.composeStatus?.toLowerCase() ?? "";
+              const composeFailed = cs.includes("fail") || cs.includes("revert") ||
+                activeSession.error?.toLowerCase().includes("compose");
+              if (composeFailed) return "lzCompose failed on destination chain";
+              return activeSession.error ?? error ?? undefined;
+            })()}
           />
         </div>
       )}

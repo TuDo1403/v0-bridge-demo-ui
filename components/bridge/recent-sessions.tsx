@@ -76,7 +76,10 @@ function SessionRow({
   const { icon, color } = sessionIndicator(session);
   const [retrying, setRetrying] = useState(false);
 
-  const isFailed = session.status === "error" || session.status === "failed";
+  const cs = session.lzTracking?.composeStatus?.toLowerCase() ?? "";
+  const composeFailed = cs.includes("fail") || cs.includes("revert") ||
+    (session.status === "completed" && session.error?.toLowerCase().includes("compose"));
+  const isFailed = session.status === "error" || session.status === "failed" || composeFailed;
   const isTerminal = session.status === "completed" || isFailed;
 
   // Phantom = awaiting_transfer without a tx hash (user never actually sent)
@@ -154,18 +157,21 @@ function SessionRow({
           {timeAgo}
         </span>
 
-        {/* Dismiss button for phantom or terminal sessions */}
+        {/* Dismiss: use span with role to avoid nested button */}
         {(isPhantom || isTerminal) && (
-          <button
+          <span
+            role="button"
+            tabIndex={0}
             onClick={(e) => {
               e.stopPropagation();
               removeSession(session.id);
             }}
-            className="shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); removeSession(session.id); } }}
+            className="shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
             title="Remove session"
           >
             <X className="h-3 w-3" />
-          </button>
+          </span>
         )}
       </button>
 
