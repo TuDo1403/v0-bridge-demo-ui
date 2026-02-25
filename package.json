@@ -9,6 +9,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.62.0",
     "@hookform/resolvers": "^3.9.1",
     "@vercel/analytics": "1.6.1",
     "@radix-ui/react-accordion": "1.2.12",
@@ -57,6 +58,10 @@
     "sonner": "^1.7.1",
     "tailwind-merge": "^3.3.1",
     "vaul": "^1.1.2",
+    "viem": "^2.21.0",
+    "wagmi": "^2.14.0",
+    "@wagmi/core": "^2.16.0",
+    "zustand": "^5.0.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

@@ -1,0 +1,130 @@
+import { create } from "zustand";
+import type { BridgeSession, BridgeStatus } from "./types";
+import { BRIDGE_ROUTES } from "@/config/chains";
+
+/* ------------------------------------------------------------------ */
+/*  LocalStorage helpers                                               */
+/* ------------------------------------------------------------------ */
+
+const STORAGE_KEY = "rise-bridge-sessions";
+
+function loadSessions(): BridgeSession[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions(sessions: BridgeSession[]) {
+  if (typeof window === "undefined") return;
+  try {
+    // Keep last 20 sessions
+    const trimmed = sessions.slice(-20);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // ignore
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Store interface                                                    */
+/* ------------------------------------------------------------------ */
+
+interface BridgeStore {
+  // Form state
+  sourceChainId: number;
+  destChainId: number;
+  tokenKey: string;
+  amount: string;
+  depositAddress: string;
+
+  // Active session
+  activeSession: BridgeSession | null;
+  recentSessions: BridgeSession[];
+
+  // Actions
+  setSourceChainId: (id: number) => void;
+  setDestChainId: (id: number) => void;
+  setTokenKey: (key: string) => void;
+  setAmount: (amount: string) => void;
+  setDepositAddress: (addr: string) => void;
+
+  // Session management
+  createSession: (params: {
+    userAddress: string;
+    depositAddress: string;
+  }) => BridgeSession;
+  updateSession: (id: string, updates: Partial<BridgeSession>) => void;
+  setActiveSession: (session: BridgeSession | null) => void;
+  loadRecentSessions: () => void;
+
+  // Reset
+  resetForm: () => void;
+}
+
+export const useBridgeStore = create<BridgeStore>((set, get) => ({
+  sourceChainId: BRIDGE_ROUTES[0]?.sourceChainId ?? 11155111,
+  destChainId: BRIDGE_ROUTES[0]?.destChainId ?? 11155931,
+  tokenKey: "USDC",
+  amount: "",
+  depositAddress: "",
+
+  activeSession: null,
+  recentSessions: [],
+
+  setSourceChainId: (id) => set({ sourceChainId: id }),
+  setDestChainId: (id) => set({ destChainId: id }),
+  setTokenKey: (key) => set({ tokenKey: key }),
+  setAmount: (amount) => set({ amount }),
+  setDepositAddress: (addr) => set({ depositAddress: addr }),
+
+  createSession: ({ userAddress, depositAddress }) => {
+    const state = get();
+    const session: BridgeSession = {
+      id: `ses_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      createdAt: Date.now(),
+      sourceChainId: state.sourceChainId,
+      destChainId: state.destChainId,
+      tokenKey: state.tokenKey,
+      amount: state.amount,
+      userAddress,
+      depositAddress,
+      status: "awaiting_transfer" as BridgeStatus,
+    };
+
+    const sessions = [...get().recentSessions, session];
+    saveSessions(sessions);
+
+    set({ activeSession: session, recentSessions: sessions });
+    return session;
+  },
+
+  updateSession: (id, updates) => {
+    const sessions = get().recentSessions.map((s) =>
+      s.id === id ? { ...s, ...updates } : s
+    );
+    saveSessions(sessions);
+
+    const active = get().activeSession;
+    const updatedActive =
+      active?.id === id ? { ...active, ...updates } : active;
+
+    set({ recentSessions: sessions, activeSession: updatedActive });
+  },
+
+  setActiveSession: (session) => set({ activeSession: session }),
+
+  loadRecentSessions: () => {
+    const sessions = loadSessions();
+    set({ recentSessions: sessions });
+  },
+
+  resetForm: () =>
+    set({
+      amount: "",
+      activeSession: null,
+    }),
+}));
