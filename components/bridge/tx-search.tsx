@@ -503,14 +503,15 @@ function LzResultCard({
 /*  TxSearch – the search bar + result display                         */
 /* ------------------------------------------------------------------ */
 
-export function TxSearch() {
-  const [query, setQuery] = useState("");
+export function TxSearch({ initialHash }: { initialHash?: string } = {}) {
+  const [query, setQuery] = useState(initialHash ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [pollingActive, setPollingActive] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const didAutoSearch = useRef(false);
 
   // Stop polling on unmount
   useEffect(() => {
@@ -594,6 +595,14 @@ export function TxSearch() {
       }, 6000);
     }
   }, [query, doLookup]);
+
+  // Auto-search on mount when initialHash is provided (e.g. /track/0x...)
+  useEffect(() => {
+    if (initialHash && !didAutoSearch.current) {
+      didAutoSearch.current = true;
+      handleSearch();
+    }
+  }, [initialHash, handleSearch]);
 
   const handleClose = useCallback(() => {
     setResult(null);

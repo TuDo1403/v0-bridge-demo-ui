@@ -1,5 +1,5 @@
-import { BridgeDashboard } from "@/components/bridge/bridge-dashboard";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return <BridgeDashboard />;
+  redirect("/bridge");
 }
