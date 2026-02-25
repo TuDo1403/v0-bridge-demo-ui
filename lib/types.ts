@@ -69,11 +69,29 @@ export interface BridgeStatusResponse {
   lzTxHash?: string;
   destinationTxHash?: string;
   error?: string;
+  /** Merged LZ tracking snapshot */
+  lzTracking?: LzTrackingSnapshot;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Session (persisted in localStorage)                                */
 /* ------------------------------------------------------------------ */
+
+export interface LzTrackingSnapshot {
+  guid?: string;
+  lzStatus?: string;          // normalised: lz_indexing | lz_inflight | lz_delivered | lz_failed
+  srcTxHash?: string;
+  dstTxHash?: string;
+  srcEid?: number;
+  dstEid?: number;
+  sender?: string;
+  receiver?: string;
+  composeStatus?: string;     // SUCCEEDED | FAILED | NOT_EXECUTED | UNKNOWN
+  composeTxHash?: string;
+  rawStatus?: string;
+  lzCreated?: number;
+  lzUpdated?: number;
+}
 
 export interface BridgeSession {
   id: string;
@@ -92,6 +110,8 @@ export interface BridgeSession {
   lzTxHash?: string;
   destinationTxHash?: string;
   error?: string;
+  /** LayerZero tracking data merged from LZ Scan API */
+  lzTracking?: LzTrackingSnapshot;
 }
 
 /* ------------------------------------------------------------------ */
