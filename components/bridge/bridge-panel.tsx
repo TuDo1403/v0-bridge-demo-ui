@@ -100,10 +100,10 @@ export function BridgePanel() {
 
     const s = activeSession.status;
 
-    // Failed / error: show form with error panel
+    // Failed / error: show tracking card if we have a jobId, otherwise form with error
     if (s === "error" || s === "failed") {
       setError(activeSession.error ?? "Bridge transaction failed.");
-      setStep("form");
+      setStep(activeSession.jobId ? "polling" : "form");
       return;
     }
 
