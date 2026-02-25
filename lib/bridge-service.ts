@@ -17,6 +17,9 @@ export async function submitBridgeProcess(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    if (res.status === 409) {
+      throw new Error(err.error ?? "Duplicate transfer already submitted");
+    }
     throw new Error(err.error ?? `Bridge process failed: ${res.status}`);
   }
 
@@ -26,7 +29,9 @@ export async function submitBridgeProcess(
 export async function pollBridgeStatus(
   jobId: string
 ): Promise<BridgeStatusResponse> {
-  const res = await fetch(`${API_BASE}/status?jobId=${encodeURIComponent(jobId)}`);
+  const res = await fetch(
+    `${API_BASE}/status?jobId=${encodeURIComponent(jobId)}`
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "Unknown error" }));
@@ -36,6 +41,23 @@ export async function pollBridgeStatus(
   return res.json();
 }
 
+export async function retryBridgeJob(
+  jobId: string
+): Promise<BridgeStatusResponse> {
+  const res = await fetch(`${API_BASE}/retry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error ?? `Retry failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
 export function isTerminalStatus(status: string): boolean {
-  return status === "completed" || status === "error";
+  return status === "completed" || status === "error" || status === "failed";
 }

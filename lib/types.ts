@@ -8,10 +8,15 @@ export type BridgeStatus =
   | "transfer_submitted"
   | "transfer_mined"
   | "deposit_verified"
-  | "backend_submitted"
+  | "source_verified"
+  | "bridge_submitted"
+  | "bridge_mined"
+  | "backend_submitted"     // legacy alias
+  | "lz_indexing"
   | "lz_pending"
   | "destination_confirmed"
   | "completed"
+  | "failed"
   | "error";
 
 export const STATUS_LABELS: Record<BridgeStatus, string> = {
@@ -20,10 +25,15 @@ export const STATUS_LABELS: Record<BridgeStatus, string> = {
   transfer_submitted: "Tx Submitted",
   transfer_mined: "Tx Mined",
   deposit_verified: "Deposit Verified",
+  source_verified: "Source Verified",
+  bridge_submitted: "Bridge Submitted",
+  bridge_mined: "Bridge Mined",
   backend_submitted: "Processing",
+  lz_indexing: "LZ Indexing",
   lz_pending: "LZ Pending",
   destination_confirmed: "Destination Confirmed",
   completed: "Completed",
+  failed: "Failed",
   error: "Error",
 };
 
@@ -33,45 +43,82 @@ export const STATUS_ORDER: BridgeStatus[] = [
   "transfer_submitted",
   "transfer_mined",
   "deposit_verified",
-  "backend_submitted",
+  "source_verified",
+  "bridge_submitted",
+  "bridge_mined",
+  "lz_indexing",
   "lz_pending",
   "destination_confirmed",
   "completed",
 ];
 
+/** Map backend job status to our BridgeStatus */
+export function mapBackendStatus(backendStatus: string): BridgeStatus {
+  const map: Record<string, BridgeStatus> = {
+    source_verified: "source_verified",
+    bridge_submitted: "bridge_submitted",
+    bridge_mined: "bridge_mined",
+    lz_indexing: "lz_indexing",
+    lz_pending: "lz_pending",
+    completed: "completed",
+    failed: "failed",
+  };
+  return map[backendStatus] ?? "error";
+}
+
 /* ------------------------------------------------------------------ */
 /*  API types                                                          */
 /* ------------------------------------------------------------------ */
 
+/* -- Request to our Next.js proxy (client -> proxy) -- */
 export interface BridgeProcessRequest {
   sourceChainId: number;
-  dstChainId: number;
-  token: string;
-  amount: string;
-  userAddress: string;
-  depositAddress: string;
   userTransferTxHash: string;
+  token: string;           // token contract address on source chain
+  receiver: string;        // user's receiving address on dest chain
+  composer: string;        // composer contract address (allowlisted)
+  composeMsg: string;      // hex-encoded compose message
 }
 
+/* -- Response from our Next.js proxy after POST /v1/bridge/process -- */
 export interface BridgeProcessResponse {
   jobId: string;
-  backendProcessTxHash: string;
-  lzMessageId?: string;
-  lzTxHash?: string;
-  status: BridgeStatus;
+  status: string;
+  depositAddress: string;
+  backendProcessTxHash: string | null;
 }
 
+/* -- Response from GET /v1/bridge/status/{jobId} -- */
 export interface BridgeStatusResponse {
-  status: BridgeStatus;
-  sourceTxHash?: string;
-  backendProcessTxHash?: string;
-  lzMessageId?: string;
-  lzTxHash?: string;
-  destinationTxHash?: string;
-  error?: string;
-  /** Merged LZ tracking snapshot */
-  lzTracking?: LzTrackingSnapshot;
+  jobId: string;
+  status: BackendJobStatus;
+  userTransferTxHash: string;
+  backendProcessTxHash: string | null;
+  lzMessageId: string | null;
+  destinationTxHash: string | null;
+  composeStatus: string | null;
+  composeTxHash: string | null;
+  sender: string | null;
+  receiver: string;
+  token: string;
+  amount: string;
+  feeAmount: string | null;
+  netAmount: string | null;
+  sourceChainId: number;
+  dstChainId: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
+
+export type BackendJobStatus =
+  | "source_verified"
+  | "bridge_submitted"
+  | "bridge_mined"
+  | "lz_indexing"
+  | "lz_pending"
+  | "completed"
+  | "failed";
 
 /* ------------------------------------------------------------------ */
 /*  Session (persisted in localStorage)                                */

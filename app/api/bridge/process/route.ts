@@ -1,95 +1,58 @@
 import { NextResponse } from "next/server";
-import type { BridgeProcessRequest, BridgeProcessResponse } from "@/lib/types";
 
-/**
- * Mock bridge process API.
- * In production, replace with real backend call.
- */
-
-// In-memory mock job store
-const jobs = new Map<
-  string,
-  {
-    status: string;
-    sourceTxHash: string;
-    backendProcessTxHash: string;
-    lzMessageId: string;
-    lzTxHash: string;
-    destinationTxHash?: string;
-    createdAt: number;
-  }
->();
-
-// Export for status route to use
-export { jobs };
+const BRIDGE_API = "https://bridge-api.tudm.net";
+const API_KEY = process.env.BRIDGE_API_KEY ?? "";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as BridgeProcessRequest;
+    const body = await request.json();
 
-    // Validate required fields
-    if (
-      !body.sourceChainId ||
-      !body.dstChainId ||
-      !body.token ||
-      !body.amount ||
-      !body.userAddress ||
-      !body.depositAddress ||
-      !body.userTransferTxHash
-    ) {
+    // Validate required fields per the real API
+    const required = [
+      "sourceChainId",
+      "userTransferTxHash",
+      "token",
+      "receiver",
+      "composer",
+      "composeMsg",
+    ];
+    for (const field of required) {
+      if (!body[field]) {
+        return NextResponse.json(
+          { error: `Missing required field: ${field}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    const res = await fetch(`${BRIDGE_API}/v1/bridge/process`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": API_KEY,
+      },
+      body: JSON.stringify({
+        sourceChainId: body.sourceChainId,
+        userTransferTxHash: body.userTransferTxHash,
+        token: body.token,
+        receiver: body.receiver,
+        composer: body.composer,
+        composeMsg: body.composeMsg,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
       return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
+        { error: data.error ?? `Bridge API error: ${res.status}` },
+        { status: res.status }
       );
     }
 
-    const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const backendProcessTxHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-    const lzMessageId = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-    const lzTxHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-
-    jobs.set(jobId, {
-      status: "backend_submitted",
-      sourceTxHash: body.userTransferTxHash,
-      backendProcessTxHash,
-      lzMessageId,
-      lzTxHash,
-      createdAt: Date.now(),
-    });
-
-    // Simulate progression: after 8s -> lz_pending, 16s -> destination_confirmed, 20s -> completed
-    setTimeout(() => {
-      const job = jobs.get(jobId);
-      if (job && job.status === "backend_submitted") {
-        job.status = "lz_pending";
-      }
-    }, 8000);
-
-    setTimeout(() => {
-      const job = jobs.get(jobId);
-      if (job && job.status === "lz_pending") {
-        job.status = "destination_confirmed";
-        job.destinationTxHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-      }
-    }, 16000);
-
-    setTimeout(() => {
-      const job = jobs.get(jobId);
-      if (job && job.status === "destination_confirmed") {
-        job.status = "completed";
-      }
-    }, 20000);
-
-    const response: BridgeProcessResponse = {
-      jobId,
-      backendProcessTxHash,
-      lzMessageId,
-      lzTxHash,
-      status: "backend_submitted",
-    };
-
-    return NextResponse.json(response);
-  } catch {
+    return NextResponse.json(data);
+  } catch (err) {
+    console.error("[bridge/process] Error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

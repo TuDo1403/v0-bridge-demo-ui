@@ -3,23 +3,23 @@ import { NextResponse } from "next/server";
 const BRIDGE_API = "https://bridge-api.tudm.net";
 const API_KEY = process.env.BRIDGE_API_KEY ?? "";
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const jobId = searchParams.get("jobId");
-
-  if (!jobId) {
-    return NextResponse.json(
-      { error: "Missing jobId parameter" },
-      { status: 400 }
-    );
-  }
-
+export async function POST(request: Request) {
   try {
+    const body = await request.json();
+    const jobId = body.jobId;
+
+    if (!jobId) {
+      return NextResponse.json(
+        { error: "Missing jobId" },
+        { status: 400 }
+      );
+    }
+
     const res = await fetch(
-      `${BRIDGE_API}/v1/bridge/status/${encodeURIComponent(jobId)}`,
+      `${BRIDGE_API}/v1/bridge/retry/${encodeURIComponent(jobId)}`,
       {
+        method: "POST",
         headers: { "X-API-Key": API_KEY },
-        cache: "no-store",
       }
     );
 
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json(data);
   } catch (err) {
-    console.error("[bridge/status] Error:", err);
+    console.error("[bridge/retry] Error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

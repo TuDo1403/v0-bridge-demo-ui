@@ -15,6 +15,7 @@ import { CHAINS } from "@/config/chains";
 import {
   TOKENS,
   SUPPORTED_TOKEN_KEYS,
+  CONTRACTS,
   getTokenAddress,
   getGlobalDepositAddress,
 } from "@/config/contracts";
@@ -22,9 +23,10 @@ import { BRIDGE_ROUTES } from "@/config/chains";
 import {
   submitBridgeProcess,
   pollBridgeStatus,
+  retryBridgeJob,
   isTerminalStatus,
 } from "@/lib/bridge-service";
-import { CONTRACT_ERROR_MAP, type BridgeStatus, type BridgeSession } from "@/lib/types";
+import { CONTRACT_ERROR_MAP, mapBackendStatus, type BridgeStatus, type BridgeSession } from "@/lib/types";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,9 +93,11 @@ export function BridgePanel() {
       activeSession &&
       activeSession.jobId &&
       !isTerminalStatus(activeSession.status) &&
-      ["backend_submitted", "lz_pending", "destination_confirmed"].includes(
-        activeSession.status
-      )
+      [
+        "source_verified", "bridge_submitted", "bridge_mined",
+        "backend_submitted", "lz_indexing", "lz_pending",
+        "destination_confirmed",
+      ].includes(activeSession.status)
     ) {
       setStep("polling");
       startPolling(activeSession.jobId, activeSession.id);
@@ -228,31 +232,32 @@ export function BridgePanel() {
   const handlePostMine = useCallback(async () => {
     if (!activeSession) return;
 
-    // Verify deposit
+    // Verify deposit balance on source chain
     const balResult = await refetchBalance();
     const bal = balResult.data;
     if (bal && bal > 0n) {
       updateSession(activeSession.id, { status: "deposit_verified" });
     }
 
-    // Submit to backend
+    // Build compose message (receiver address as bytes for the composer)
+    const composerAddr = CONTRACTS[activeSession.destChainId]?.riseXComposer;
+    const composeMsg = activeSession.userAddress as string; // hex address
+
+    // Submit to real bridge API
     try {
       const res = await submitBridgeProcess({
         sourceChainId: activeSession.sourceChainId,
-        dstChainId: activeSession.destChainId,
-        token: tokenKey,
-        amount: activeSession.amount,
-        userAddress: activeSession.userAddress,
-        depositAddress: activeSession.depositAddress,
         userTransferTxHash: activeSession.userTransferTxHash!,
+        token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
+        receiver: activeSession.userAddress,
+        composer: composerAddr ?? "0x9bf8053c29c533b6238fc4e72a97eca8016501dd",
+        composeMsg,
       });
 
       updateSession(activeSession.id, {
-        status: "backend_submitted",
+        status: mapBackendStatus(res.status),
         jobId: res.jobId,
-        backendProcessTxHash: res.backendProcessTxHash,
-        lzMessageId: res.lzMessageId,
-        lzTxHash: res.lzTxHash,
+        backendProcessTxHash: res.backendProcessTxHash ?? undefined,
       });
 
       setStep("polling");
@@ -264,7 +269,7 @@ export function BridgePanel() {
       setError(errMsg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession, tokenKey]);
+  }, [activeSession]);
 
   const startPolling = useCallback(
     (jobId: string, sessionId: string) => {
@@ -272,31 +277,37 @@ export function BridgePanel() {
 
       pollingRef.current = setInterval(async () => {
         try {
-          const status = await pollBridgeStatus(jobId);
+          const res = await pollBridgeStatus(jobId);
+          const mappedStatus = mapBackendStatus(res.status);
 
           const sessionUpdates: Partial<BridgeSession> = {
-            status: status.status as BridgeStatus,
-            backendProcessTxHash: status.backendProcessTxHash,
-            lzMessageId: status.lzMessageId,
-            lzTxHash: status.lzTxHash,
-            destinationTxHash: status.destinationTxHash,
-            error: status.error,
+            status: mappedStatus,
+            backendProcessTxHash: res.backendProcessTxHash ?? undefined,
+            lzMessageId: res.lzMessageId ?? undefined,
+            destinationTxHash: res.destinationTxHash ?? undefined,
+            error: res.error ?? undefined,
+            // Store compose and amount info from the real API
+            lzTracking: {
+              guid: res.lzMessageId ?? undefined,
+              lzStatus: res.status,
+              srcTxHash: res.userTransferTxHash,
+              dstTxHash: res.destinationTxHash ?? undefined,
+              composeStatus: res.composeStatus ?? undefined,
+              composeTxHash: res.composeTxHash ?? undefined,
+              sender: res.sender ?? undefined,
+              receiver: res.receiver,
+            },
           };
-
-          // Merge LZ tracking snapshot from backend
-          if (status.lzTracking) {
-            sessionUpdates.lzTracking = status.lzTracking;
-          }
 
           updateSession(sessionId, sessionUpdates);
 
-          if (isTerminalStatus(status.status)) {
+          if (isTerminalStatus(res.status)) {
             if (pollingRef.current) clearInterval(pollingRef.current);
             pollingRef.current = null;
-            if (status.status === "completed") {
+            if (res.status === "completed") {
               setStep("complete");
-            } else if (status.error) {
-              setError(status.error);
+            } else if (res.status === "failed") {
+              setError(res.error ?? "Bridge job failed");
             }
           }
         } catch {
@@ -344,9 +355,29 @@ export function BridgePanel() {
     });
   };
 
-  const handleRetry = () => {
+  const handleRetry = async () => {
     setError(null);
-    if (activeSession && activeSession.status === "error") {
+
+    // If the active session has a jobId and is in failed/error status, try the real retry API
+    if (activeSession?.jobId && (activeSession.status === "failed" || activeSession.status === "error")) {
+      try {
+        const res = await retryBridgeJob(activeSession.jobId);
+        updateSession(activeSession.id, {
+          status: mapBackendStatus(res.status),
+          error: undefined,
+        });
+        setStep("polling");
+        startPolling(activeSession.jobId, activeSession.id);
+        return;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Retry failed";
+        setError(errMsg);
+        // Fall through to reset if retry fails
+      }
+    }
+
+    // If no jobId or retry failed, reset to form
+    if (activeSession) {
       updateSession(activeSession.id, { status: "idle" });
     }
     setStep("form");
