@@ -16,7 +16,7 @@ interface StatusRailProps {
 
 export function StatusRail({ currentStatus, error }: StatusRailProps) {
   const currentIndex = STATUS_ORDER.indexOf(currentStatus);
-  const isError = currentStatus === "error";
+  const isError = currentStatus === "error" || currentStatus === "failed";
 
   // Filter out idle for the visual rail
   const displaySteps = STATUS_ORDER.filter((s) => s !== "idle");

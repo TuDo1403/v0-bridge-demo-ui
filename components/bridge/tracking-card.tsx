@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useBridgeStore } from "@/lib/bridge-store";
+import { retryBridgeJob } from "@/lib/bridge-service";
+import { mapBackendStatus } from "@/lib/types";
 import { CHAINS, lzScanMessageUrl, LZ_SCAN_BASE } from "@/config/chains";
 import { TOKENS } from "@/config/contracts";
 import type { BridgeSession, LzTrackingSnapshot } from "@/lib/types";
@@ -50,15 +52,24 @@ type TrackingPhase =
 function derivePhase(session: BridgeSession): TrackingPhase {
   const lz = session.lzTracking;
   if (session.status === "completed") return "complete";
-  if (session.status === "error") return "failed";
-  if (!lz || !lz.lzStatus) return "waiting";
-  if (lz.lzStatus === "lz_failed" || lz.lzStatus === "lz_blocked") return "failed";
-  if (lz.lzStatus === "lz_delivered") {
-    if (lz.composeStatus === "SUCCEEDED") return "complete";
-    if (lz.composeStatus === "FAILED") return "failed";
+  if (session.status === "error" || session.status === "failed") return "failed";
+
+  // Map backend job statuses
+  if (session.status === "source_verified" || session.status === "bridge_submitted") return "waiting";
+  if (session.status === "bridge_mined" || session.status === "lz_indexing") return "indexing";
+
+  // LZ tracking states
+  if (!lz || !lz.lzStatus) {
+    if (session.status === "lz_pending") return "inflight";
+    return "waiting";
+  }
+  if (lz.lzStatus === "lz_failed" || lz.lzStatus === "lz_blocked" || lz.lzStatus === "failed") return "failed";
+  if (lz.lzStatus === "lz_delivered" || lz.lzStatus === "completed") {
+    if (lz.composeStatus === "SUCCEEDED" || lz.composeStatus === "completed") return "complete";
+    if (lz.composeStatus === "FAILED" || lz.composeStatus === "failed") return "failed";
     return "verifying";
   }
-  if (lz.lzStatus === "lz_inflight") return "inflight";
+  if (lz.lzStatus === "lz_inflight" || lz.lzStatus === "lz_pending") return "inflight";
   return "indexing";
 }
 
@@ -307,9 +318,9 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
         </div>
 
         {/* LZ Scan link */}
-        {(session.lzTxHash || lz?.srcTxHash) && (
+        {(session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash) && (
           <a
-            href={`${LZ_SCAN_BASE}/tx/${session.lzTxHash || lz?.srcTxHash}`}
+            href={`${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash}`}
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono text-primary hover:text-primary/80 bg-primary/10 transition-colors"
@@ -364,8 +375,8 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
               label="LZ Msg"
               hash={lz?.guid ?? session.lzMessageId}
               explorerUrl={
-                (session.lzTxHash || lz?.srcTxHash)
-                  ? `${LZ_SCAN_BASE}/tx/${session.lzTxHash || lz?.srcTxHash}`
+                (session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash)
+                  ? `${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash}`
                   : undefined
               }
             />
@@ -452,17 +463,39 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             </div>
           )}
 
-          {/* Failed with retry suggestion */}
+          {/* Failed with retry */}
           {phase === "failed" && (
-            <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-[11px] font-mono text-destructive-foreground flex items-start gap-2">
-              <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              <div>
-                {session.error ?? "The bridge transaction failed."}{" "}
-                {lz?.composeStatus === "FAILED" && (
-                  <>Compose execution failed on the destination chain. </>
-                )}
-                You can check the transaction on LayerZero Scan for more details.
+            <div className="flex flex-col gap-2">
+              <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-[11px] font-mono text-destructive-foreground flex items-start gap-2">
+                <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <div>
+                  {session.error ?? "The bridge transaction failed."}{" "}
+                  {lz?.composeStatus === "FAILED" && (
+                    <>Compose execution failed on the destination chain. </>
+                  )}
+                </div>
               </div>
+              {session.jobId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="font-mono text-xs gap-1.5 self-start"
+                  onClick={async () => {
+                    try {
+                      const res = await retryBridgeJob(session.jobId!);
+                      updateSession(session.id, {
+                        status: mapBackendStatus(res.status),
+                        error: undefined,
+                      });
+                    } catch {
+                      // retry failed silently
+                    }
+                  }}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  Retry Bridge
+                </Button>
+              )}
             </div>
           )}
         </div>
