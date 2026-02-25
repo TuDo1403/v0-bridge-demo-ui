@@ -691,6 +691,55 @@ export function BridgePanel() {
             </div>
           )}
 
+          {/* Error banner + retry for failed backend processing */}
+          {activeSession && (activeSession.status === "error" || activeSession.status === "failed") && error && (
+            <div className="flex flex-col gap-3 p-4 rounded-lg border border-destructive/30 bg-destructive/5">
+              <div className="flex items-start gap-2 text-xs font-mono text-destructive-foreground">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+              <div className="flex gap-2">
+                {activeSession.jobId && (
+                  <Button
+                    variant="outline"
+                    onClick={handleRetry}
+                    className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Retry Bridge Job
+                  </Button>
+                )}
+                {!activeSession.jobId && activeSession.userTransferTxHash && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setError(null);
+                      handlePostMine();
+                    }}
+                    className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Retry Processing
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setError(null);
+                    if (activeSession) {
+                      updateSession(activeSession.id, { status: "idle", error: undefined });
+                    }
+                    setStep("form");
+                    resetForm();
+                  }}
+                  className="h-10 font-mono text-sm gap-2 text-muted-foreground"
+                >
+                  Start Over
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Submit button */}
           <Button
             onClick={handleInitiateBridge}
@@ -822,15 +871,29 @@ export function BridgePanel() {
         <div className="flex flex-col gap-4">
           <TrackingCard session={activeSession} />
 
-          {error && (
-            <Button
-              variant="outline"
-              onClick={handleRetry}
-              className="font-mono text-sm gap-2"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Start New Bridge
-            </Button>
+          {(activeSession.status === "error" || activeSession.status === "failed") && (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={handleRetry}
+                className="font-mono text-sm gap-2 flex-1"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {activeSession.jobId ? "Retry Bridge Job" : "Retry"}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setError(null);
+                  updateSession(activeSession.id, { status: "idle", error: undefined });
+                  setStep("form");
+                  resetForm();
+                }}
+                className="font-mono text-sm gap-2 text-muted-foreground"
+              >
+                Start Over
+              </Button>
+            </div>
           )}
         </div>
       )}
