@@ -103,7 +103,13 @@ function SessionCard({ session }: { session: BridgeSession }) {
   const failed = isSessionFailed(session);
   const completed = session.status === "completed" && !failed;
 
-  const trackHash = session.lzTracking?.guid ?? session.backendProcessTxHash ?? session.userTransferTxHash;
+    const trackGuid = session.lzTracking?.guid;
+    const trackTxHash = session.backendProcessTxHash ?? session.userTransferTxHash;
+    const trackUrl = trackGuid
+      ? `/track/guid/${trackGuid}`
+      : trackTxHash
+        ? `/track/tx/${trackTxHash}`
+        : null;
 
   return (
     <div
@@ -192,12 +198,12 @@ function SessionCard({ session }: { session: BridgeSession }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {trackHash && (
+          {trackUrl && (
             <Button
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-[10px] font-mono gap-1"
-              onClick={() => router.push(`/track/${trackHash}`)}
+              onClick={() => router.push(trackUrl)}
             >
               <Search className="h-3 w-3" />
               Track

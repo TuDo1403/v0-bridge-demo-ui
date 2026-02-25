@@ -503,7 +503,14 @@ function LzResultCard({
 /*  TxSearch – the search bar + result display                         */
 /* ------------------------------------------------------------------ */
 
-export function TxSearch({ initialHash }: { initialHash?: string } = {}) {
+export function TxSearch({
+  initialHash,
+  lookupType,
+}: {
+  initialHash?: string;
+  /** Hint which LZ Scan endpoint to try first */
+  lookupType?: "tx" | "guid";
+} = {}) {
   const [query, setQuery] = useState(initialHash ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -527,11 +534,12 @@ export function TxSearch({ initialHash }: { initialHash?: string } = {}) {
     const trimmed = hash.trim();
     const base = "https://scan-testnet.layerzero-api.com/v1";
 
-    // Try tx hash endpoint first, then GUID endpoint
-    const urls = [
-      `${base}/messages/tx/${trimmed}`,
-      `${base}/messages/guid/${trimmed}`,
-    ];
+    // Order endpoints: if lookupType is provided, try that first
+    const txUrl = `${base}/messages/tx/${trimmed}`;
+    const guidUrl = `${base}/messages/guid/${trimmed}`;
+    const urls = lookupType === "guid"
+      ? [guidUrl, txUrl]
+      : [txUrl, guidUrl];
 
     for (const url of urls) {
       try {
