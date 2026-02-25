@@ -849,18 +849,50 @@ export function BridgePanel() {
           )}
 
           {error && (
-            <div className="flex flex-col gap-2">
-              <div className="px-3 py-2 bg-destructive/10 border border-destructive/20 rounded text-xs font-mono text-destructive-foreground">
-                {error}
+            <div className="flex flex-col gap-3 p-4 rounded-lg border border-destructive/30 bg-destructive/5">
+              <div className="flex items-start gap-2 text-xs font-mono text-destructive-foreground">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{error}</span>
               </div>
-              <Button
-                variant="outline"
-                onClick={handleCancelTransfer}
-                className="font-mono text-sm gap-2"
-              >
-                <RotateCcw className="h-3 w-3" />
-                Go Back
-              </Button>
+              <div className="flex gap-2">
+                {/* Retry: if we have a jobId, call retry API; otherwise re-submit handlePostMine */}
+                {activeSession?.jobId ? (
+                  <Button
+                    variant="outline"
+                    onClick={handleRetry}
+                    className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Retry Bridge Job
+                  </Button>
+                ) : activeSession?.userTransferTxHash ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setError(null);
+                      handlePostMine();
+                    }}
+                    className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Retry Processing
+                  </Button>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setError(null);
+                    if (activeSession) {
+                      updateSession(activeSession.id, { status: "idle", error: undefined });
+                    }
+                    setStep("form");
+                    resetForm();
+                  }}
+                  className="h-10 font-mono text-sm gap-2 text-muted-foreground"
+                >
+                  Start Over
+                </Button>
+              </div>
             </div>
           )}
         </div>
