@@ -5,7 +5,7 @@ import { useBridgeStore } from "@/lib/bridge-store";
 import { retryBridgeJob } from "@/lib/bridge-service";
 import { STATUS_LABELS, mapBackendStatus, type BridgeSession, type BridgeStatus } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
-import { TOKENS } from "@/config/contracts";
+import { TOKENS, buildComposeData } from "@/config/contracts";
 import { cn } from "@/lib/utils";
 import { ChainIcon } from "./chain-icon";
 import { Button } from "@/components/ui/button";
@@ -88,10 +88,7 @@ function SessionRow({
     if (!session.jobId || retrying) return;
     setRetrying(true);
     try {
-      const composeData =
-        session.composer && session.composeMsg
-          ? { composer: session.composer, composeMsg: session.composeMsg }
-          : undefined;
+      const composeData = buildComposeData(session);
       const res = await retryBridgeJob(session.jobId, composeData);
       updateSession(session.id, {
         status: mapBackendStatus(res.status),

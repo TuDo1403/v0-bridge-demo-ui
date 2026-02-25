@@ -1,4 +1,10 @@
-import { type Address } from "viem";
+import {
+  type Address,
+  parseUnits,
+  encodeFunctionData,
+  encodeAbiParameters,
+  parseAbiParameters,
+} from "viem";
 
 /* ------------------------------------------------------------------ */
 /*  Token definitions                                                  */
@@ -68,4 +74,54 @@ export function getTokenAddress(
 
 export function getGlobalDepositAddress(chainId: number): Address | undefined {
   return CONTRACTS[chainId]?.globalDeposit;
+}
+
+/**
+ * Rebuild composer + composeMsg from session fields.
+ * This ensures retry always has compose data, even for sessions
+ * created before we started storing it.
+ */
+export function buildComposeData(session: {
+  destChainId: number;
+  tokenKey: string;
+  amount: string;
+  userAddress: string;
+}): { composer: string; composeMsg: string } {
+  const destContracts = CONTRACTS[session.destChainId];
+  const composerAddr = destContracts?.riseXComposer ?? "0x9BF8053c29C533B6238fC4e72a97Eca8016501dd";
+  const collateralMgr = destContracts?.collateralManager ?? "0x158fefb2d5635fbecf06ccb1a5129a61abf53753";
+  const destUsdcAddr = getTokenAddress(session.tokenKey, session.destChainId);
+  const decimals = TOKENS[session.tokenKey]?.decimals ?? 6;
+  const bridgedAmount = parseUnits(session.amount, decimals);
+
+  const depositCalldata = encodeFunctionData({
+    abi: [{
+      name: "deposit",
+      type: "function",
+      stateMutability: "nonpayable",
+      inputs: [
+        { name: "account", type: "address" },
+        { name: "token", type: "address" },
+        { name: "amount", type: "uint256" },
+      ],
+      outputs: [],
+    }],
+    functionName: "deposit",
+    args: [
+      session.userAddress as Address,
+      (destUsdcAddr ?? "0x6bf6e258b3c5650b448cb1112835048ba5619dc1") as Address,
+      bridgedAmount,
+    ],
+  });
+
+  const composeMsg = encodeAbiParameters(
+    parseAbiParameters("address receiver, address target, bytes data"),
+    [
+      session.userAddress as Address,
+      collateralMgr as Address,
+      depositCalldata,
+    ],
+  );
+
+  return { composer: composerAddr, composeMsg };
 }
