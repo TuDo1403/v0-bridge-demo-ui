@@ -94,32 +94,56 @@ export function BridgePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Restore error + step from persisted session on mount
+  // Restore step + error whenever the active session changes (including on mount)
   useEffect(() => {
-    if (activeSession && (activeSession.status === "error" || activeSession.status === "failed")) {
-      setError(activeSession.error ?? "Bridge transaction failed.");
-      // Keep step as "form" so the retry panel in the form view is visible
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession?.id]);
+    if (!activeSession) return;
 
-  // Resume polling if active session is in a polling state
-  useEffect(() => {
+    const s = activeSession.status;
+
+    // Failed / error: show form with error panel
+    if (s === "error" || s === "failed") {
+      setError(activeSession.error ?? "Bridge transaction failed.");
+      setStep("form");
+      return;
+    }
+
+    // Completed: show complete step
+    if (s === "completed") {
+      setStep("complete");
+      return;
+    }
+
+    // In-progress with a jobId: resume polling
     if (
-      activeSession &&
       activeSession.jobId &&
-      !isTerminalStatus(activeSession.status) &&
+      !isTerminalStatus(s) &&
       [
         "source_verified", "bridge_submitted", "bridge_mined",
         "backend_submitted", "lz_indexing", "lz_pending",
         "destination_confirmed",
-      ].includes(activeSession.status)
+      ].includes(s)
     ) {
+      setError(null);
       setStep("polling");
       startPolling(activeSession.jobId, activeSession.id);
+      return;
     }
+
+    // Transfer in progress (no jobId yet)
+    if (
+      s === "awaiting_transfer" ||
+      s === "transfer_submitted" ||
+      s === "transfer_mined" ||
+      s === "deposit_verified"
+    ) {
+      setStep("transfer");
+      return;
+    }
+
+    // Default: form
+    setStep("form");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession?.id]);
+  }, [activeSession?.id, activeSession?.status]);
 
   // Cleanup polling on unmount
   useEffect(() => {

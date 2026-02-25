@@ -27,7 +27,7 @@ function sessionIndicator(session: BridgeSession) {
 
   if (s === "completed")
     return { icon: <CheckCircle2 className="h-3 w-3" />, color: "text-success" };
-  if (s === "error")
+  if (s === "error" || s === "failed")
     return { icon: <XCircle className="h-3 w-3" />, color: "text-destructive-foreground" };
 
   if (lz?.lzStatus === "lz_inflight")
@@ -71,7 +71,7 @@ function SessionRow({
   const { icon, color } = sessionIndicator(session);
 
   const isTerminal =
-    session.status === "completed" || session.status === "error";
+    session.status === "completed" || session.status === "error" || session.status === "failed";
 
   // Phantom = awaiting_transfer without a tx hash (user never actually sent)
   const isPhantom =
@@ -105,7 +105,7 @@ function SessionRow({
         className={cn(
           "text-[9px] font-mono px-1.5 py-0.5 rounded ml-auto shrink-0 whitespace-nowrap",
           session.status === "completed" && "bg-success/15 text-success",
-          session.status === "error" &&
+          (session.status === "error" || session.status === "failed") &&
             "bg-destructive/15 text-destructive-foreground",
           !isTerminal && "bg-primary/15 text-primary"
         )}
