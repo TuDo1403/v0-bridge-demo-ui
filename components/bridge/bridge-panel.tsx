@@ -77,6 +77,7 @@ export function BridgePanel() {
     setDepositAddress,
     createSession,
     updateSession,
+    setActiveSession,
     resetForm,
     loadRecentSessions,
   } = useBridgeStore();
