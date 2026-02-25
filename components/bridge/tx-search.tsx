@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TxBadge } from "./tx-badge";
-import { ChainIcon } from "./chain-icon";
+import { ChainIcon, TokenIcon } from "./chain-icon";
 import {
   Tooltip,
   TooltipContent,
@@ -47,31 +47,35 @@ function dig(obj: any, ...keys: string[]): unknown {
   return cur;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function parseApiMessage(msg: any): LzTrackingData {
-  /*
-   * Real LZ Scan response shape (v1/messages/tx):
-   * {
-   *   pathway: { srcEid, dstEid, sender: { address, chain }, receiver: { address, chain }, nonce },
-   *   source: { status, tx: { txHash, blockTimestamp, from, ... } },
-   *   destination: { status, tx: { txHash, blockTimestamp, ... }, lzCompose: { status }, nativeDrop: { status } },
-   *   verification: { ... },
-   *   guid: ...  (sometimes at top level, sometimes in pathway.id)
-   * }
-   *
-   * Older / alternative flat shape:
-   * { status, srcTxHash, dstTxHash, srcEid, dstEid, sender, receiver, guid, ... }
-   */
+/**
+ * Try to decode amount from OFT payload.
+ * Standard OFT payload: abi.encode(address to, uint256 amountSD)
+ * The amount is the second 32-byte word (bytes 32-64).
+ */
+function tryDecodeOftAmount(payload?: string): bigint | undefined {
+  if (!payload || payload.length < 130) return undefined; // 0x + 64 + 64 = 130 min
+  try {
+    const hex = payload.startsWith("0x") ? payload.slice(2) : payload;
+    // Second 32-byte word (chars 64-128) = amount
+    const amountHex = hex.slice(64, 128);
+    if (!amountHex || amountHex.length !== 64) return undefined;
+    const val = BigInt("0x" + amountHex);
+    return val;
+  } catch {
+    return undefined;
+  }
+}
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseApiMessage(msg: any): LzTrackingData & { amountRaw?: bigint; fromAddress?: string; nonce?: number } {
   const pathway = msg?.pathway;
   const source = msg?.source;
   const destination = msg?.destination;
 
-  // -- Status: derive from destination.status > source.status > top-level status
+  // -- Status
   const dstStatus = (dig(destination, "status") as string) ?? undefined;
   const srcStatus = (dig(source, "status") as string) ?? undefined;
   const topStatus = msg?.status as string | undefined;
-  // If dst SUCCEEDED -> DELIVERED, if src SUCCEEDED but no dst -> INFLIGHT, etc.
   let resolvedStatus: string;
   if (dstStatus === "SUCCEEDED") resolvedStatus = "DELIVERED";
   else if (dstStatus === "FAILED") resolvedStatus = "FAILED";
@@ -96,12 +100,28 @@ function parseApiMessage(msg: any): LzTrackingData {
 
   // -- Compose
   const lzCompose = dig(destination, "lzCompose") as Record<string, unknown> | undefined;
-  const composeStatus = ((lzCompose?.status as string) ?? msg?.lzComposeStatus ?? "UNKNOWN").toUpperCase();
-  const composeTx = (lzCompose?.txHash ?? msg?.lzComposeTxHash) as string | undefined;
+  let composeStatus = "UNKNOWN";
+  let composeTx: string | undefined;
+  if (lzCompose) {
+    composeStatus = ((lzCompose.status as string) ?? "UNKNOWN").toUpperCase();
+    // compose txs might be in an array
+    const composeTxs = lzCompose.txs as Array<{ txHash?: string }> | undefined;
+    composeTx = composeTxs?.[0]?.txHash ?? (lzCompose.txHash as string | undefined);
+  }
 
   // -- Timestamps
   const created = (dig(source, "tx", "blockTimestamp") ?? msg?.created) as number | undefined;
   const updated = (dig(destination, "tx", "blockTimestamp") ?? msg?.updated) as number | undefined;
+
+  // -- Token amount from payload
+  const payload = dig(source, "tx", "payload") as string | undefined;
+  const amountRaw = tryDecodeOftAmount(payload);
+
+  // -- From (tx sender, not protocol sender)
+  const fromAddress = (dig(source, "tx", "from") ?? msg?.from) as string | undefined;
+
+  // -- Nonce
+  const nonce = (dig(pathway, "nonce") ?? msg?.nonce) as number | undefined;
 
   return {
     status: normalizeLzStatus(resolvedStatus),
@@ -123,6 +143,9 @@ function parseApiMessage(msg: any): LzTrackingData {
     rawStatus: resolvedStatus,
     created,
     updated,
+    amountRaw,
+    fromAddress,
+    nonce,
   };
 }
 
@@ -221,15 +244,29 @@ function chainByEid(eid?: number) {
   return Object.values(CHAINS).find((c) => c.lzEid === eid);
 }
 
+/** Format raw token amount (assumes USDC 6 decimals) */
+function formatTokenAmount(raw?: bigint): string | undefined {
+  if (raw == null || raw === 0n) return undefined;
+  const decimals = 6;
+  const divisor = 10n ** BigInt(decimals);
+  const whole = raw / divisor;
+  const frac = raw % divisor;
+  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  if (fracStr.length === 0) return whole.toString();
+  return `${whole}.${fracStr}`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Result card (standalone -- no BridgeSession needed)                */
 /* ------------------------------------------------------------------ */
+
+type SearchResult = LzTrackingData & { amountRaw?: bigint; fromAddress?: string; nonce?: number };
 
 function LzResultCard({
   data,
   onClose,
 }: {
-  data: LzTrackingData;
+  data: SearchResult;
   onClose: () => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -239,6 +276,7 @@ function LzResultCard({
 
   const srcChain = chainByEid(data.srcEid);
   const dstChain = chainByEid(data.dstEid);
+  const formattedAmount = formatTokenAmount(data.amountRaw);
 
   const borderClass = cn(
     "rounded-lg border transition-all duration-500",
@@ -253,18 +291,24 @@ function LzResultCard({
       <div className="px-4 py-3 flex items-center gap-3">
         <div className={cn("shrink-0", meta.color)}>{meta.icon}</div>
 
-        <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className={cn("text-sm font-mono font-medium", meta.color)}>
-              {meta.label}
-            </span>
-            {data.rawStatus && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">
-                {data.rawStatus}
+          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={cn("text-sm font-mono font-medium", meta.color)}>
+                {meta.label}
               </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground flex-wrap">
+              {formattedAmount && (
+                <span className="flex items-center gap-1.5 text-sm font-mono font-semibold text-foreground">
+                  <TokenIcon tokenKey="usdc" className="h-4 w-4" />
+                  {formattedAmount} USDC
+                </span>
+              )}
+              {data.rawStatus && (
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">
+                  {data.rawStatus}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground flex-wrap">
             {srcChain && (
               <>
                 <ChainIcon chainKey={srcChain.iconKey} className="h-3 w-3 shrink-0" />
@@ -352,19 +396,42 @@ function LzResultCard({
           </div>
 
           {/* Compose */}
-          {data.compose && data.compose.status !== "UNKNOWN" && (
-            <div className="flex items-center gap-2">
-              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">Compose</span>
-              <span
-                className={cn(
-                  "text-[10px] font-mono px-1.5 py-0.5 rounded",
-                  data.compose.status === "SUCCEEDED" && "bg-success/10 text-success",
-                  data.compose.status === "FAILED" && "bg-destructive/10 text-destructive-foreground",
-                  data.compose.status !== "SUCCEEDED" && data.compose.status !== "FAILED" && "bg-muted/50 text-muted-foreground",
-                )}
-              >
-                {data.compose.status}
-              </span>
+          {data.compose && data.compose.status !== "UNKNOWN" && data.compose.status !== "N/A" && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">Compose</span>
+                <span
+                  className={cn(
+                    "text-[10px] font-mono px-1.5 py-0.5 rounded",
+                    data.compose.status === "SUCCEEDED" && "bg-success/10 text-success",
+                    data.compose.status === "FAILED" && "bg-destructive/10 text-destructive-foreground",
+                    data.compose.status !== "SUCCEEDED" && data.compose.status !== "FAILED" && "bg-muted/50 text-muted-foreground",
+                  )}
+                >
+                  {data.compose.status}
+                </span>
+              </div>
+              {data.compose.txHash && (
+                <TxBadge
+                  label="Compose Tx"
+                  hash={data.compose.txHash}
+                  explorerUrl={data.compose.txHash && dstChain ? dstChain.explorerTxUrl(data.compose.txHash) : undefined}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Token info */}
+          {formattedAmount && (
+            <div className="flex items-center gap-3 p-2.5 rounded-md bg-muted/30 border border-border/50">
+              <TokenIcon tokenKey="usdc" className="h-5 w-5 shrink-0" />
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-mono font-medium text-foreground">{formattedAmount} USDC</span>
+                <span className="text-[9px] font-mono text-muted-foreground">
+                  {srcChain?.shortLabel ?? "Source"} to {dstChain?.shortLabel ?? "Dest"}
+                  {data.nonce != null && <span className="ml-2 text-muted-foreground/60">Nonce #{data.nonce}</span>}
+                </span>
+              </div>
             </div>
           )}
 
@@ -377,7 +444,8 @@ function LzResultCard({
                   Source
                 </span>
               )}
-              <Addr label="Sender" address={data.sender ?? data.srcUaAddress} />
+              <Addr label="From" address={data.fromAddress} />
+              <Addr label="OApp" address={data.sender ?? data.srcUaAddress} />
             </div>
             <div className="flex flex-col gap-1">
               {dstChain && (
@@ -386,7 +454,7 @@ function LzResultCard({
                   Destination
                 </span>
               )}
-              <Addr label="Receiver" address={data.receiver ?? data.dstUaAddress} />
+              <Addr label="OApp" address={data.receiver ?? data.dstUaAddress} />
             </div>
           </div>
 
@@ -411,7 +479,7 @@ export function TxSearch() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<LzTrackingData | null>(null);
+  const [result, setResult] = useState<SearchResult | null>(null);
   const [pollingActive, setPollingActive] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
