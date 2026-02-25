@@ -14,8 +14,13 @@ export function BridgeDashboard() {
         {/* Header */}
         <BridgeHeader />
 
+        {/* Transaction search / tracker -- top level */}
+        <div className="mt-6 p-4 sm:p-5 rounded-lg border border-border bg-card">
+          <TxSearch />
+        </div>
+
         {/* Main grid: Bridge + Sidebar */}
-        <div className="mt-6 flex flex-col lg:flex-row gap-6">
+        <div className="mt-4 flex flex-col lg:flex-row gap-6">
           {/* Left: Main bridge panel */}
           <main className="flex-1 min-w-0">
             <div className="p-4 sm:p-5 rounded-lg border border-border bg-card">
@@ -26,17 +31,6 @@ export function BridgeDashboard() {
                 <span className="h-px flex-1 bg-border" />
               </div>
               <BridgePanel />
-            </div>
-
-            {/* Transaction search / tracker */}
-            <div className="p-4 sm:p-5 rounded-lg border border-border bg-card">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                  Track Transaction
-                </span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-              <TxSearch />
             </div>
           </main>
 
