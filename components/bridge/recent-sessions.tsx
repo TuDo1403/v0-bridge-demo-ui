@@ -88,7 +88,11 @@ function SessionRow({
     if (!session.jobId || retrying) return;
     setRetrying(true);
     try {
-      const res = await retryBridgeJob(session.jobId);
+      const composeData =
+        session.composer && session.composeMsg
+          ? { composer: session.composer, composeMsg: session.composeMsg }
+          : undefined;
+      const res = await retryBridgeJob(session.jobId, composeData);
       updateSession(session.id, {
         status: mapBackendStatus(res.status),
         error: undefined,

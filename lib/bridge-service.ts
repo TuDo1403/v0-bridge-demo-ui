@@ -42,12 +42,13 @@ export async function pollBridgeStatus(
 }
 
 export async function retryBridgeJob(
-  jobId: string
+  jobId: string,
+  composeData?: { composer: string; composeMsg: string }
 ): Promise<BridgeStatusResponse> {
   const res = await fetch(`${API_BASE}/retry`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId }),
+    body: JSON.stringify({ jobId, ...composeData }),
   });
 
   if (!res.ok) {

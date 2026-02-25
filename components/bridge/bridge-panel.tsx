@@ -329,6 +329,8 @@ export function BridgePanel() {
         status: mapBackendStatus(res.status),
         jobId: res.jobId,
         backendProcessTxHash: res.backendProcessTxHash ?? undefined,
+        composer: composerAddr ?? "0x9bf8053c29c533b6238fc4e72a97eca8016501dd",
+        composeMsg,
       });
 
       setStep("polling");

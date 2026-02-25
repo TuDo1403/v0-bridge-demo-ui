@@ -365,7 +365,11 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
               className="font-mono text-xs gap-1.5 self-start border-destructive/30 hover:bg-destructive/10"
               onClick={async () => {
                 try {
-                  const res = await retryBridgeJob(session.jobId!);
+                  const composeData =
+                    session.composer && session.composeMsg
+                      ? { composer: session.composer, composeMsg: session.composeMsg }
+                      : undefined;
+                  const res = await retryBridgeJob(session.jobId!, composeData);
                   updateSession(session.id, {
                     status: mapBackendStatus(res.status),
                     error: undefined,

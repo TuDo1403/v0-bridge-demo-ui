@@ -157,6 +157,10 @@ export interface BridgeSession {
   lzTxHash?: string;
   destinationTxHash?: string;
   error?: string;
+  /** Composer contract address (needed for retry if backend lost it) */
+  composer?: string;
+  /** Hex-encoded compose message (needed for retry if backend lost it) */
+  composeMsg?: string;
   /** LayerZero tracking data merged from LZ Scan API */
   lzTracking?: LzTrackingSnapshot;
 }
