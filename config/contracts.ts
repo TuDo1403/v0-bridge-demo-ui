@@ -39,6 +39,7 @@ export interface ChainContracts {
   usdcMintBurnAdapter?: Address;
   mintBurnOFT?: Address;
   riseXComposer?: Address;
+  collateralManager?: Address;
 }
 
 export const CONTRACTS: Record<number, ChainContracts> = {
@@ -50,6 +51,7 @@ export const CONTRACTS: Record<number, ChainContracts> = {
     usdcMintBurnAdapter: "0x757b75E51E73384D53b80Aa7b92474858104d6Ea",
     mintBurnOFT: "0x7D2fAdBcDD33dA1fCd3Ae09de89E5F21D9050e27",
     riseXComposer: "0x9BF8053c29C533B6238fC4e72a97Eca8016501dd",
+    collateralManager: "0x158fefb2d5635fbecf06ccb1a5129a61abf53753",
   },
 };
 

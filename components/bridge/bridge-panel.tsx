@@ -8,7 +8,14 @@ import {
   useWaitForTransactionReceipt,
   useSwitchChain,
 } from "wagmi";
-import { parseUnits, formatUnits, type Address } from "viem";
+import {
+  parseUnits,
+  formatUnits,
+  encodeFunctionData,
+  encodeAbiParameters,
+  parseAbiParameters,
+  type Address,
+} from "viem";
 import { useBridgeStore } from "@/lib/bridge-store";
 import { riseGlobalDepositAbi, erc20Abi } from "@/lib/abi";
 import { CHAINS } from "@/config/chains";
@@ -239,9 +246,43 @@ export function BridgePanel() {
       updateSession(activeSession.id, { status: "deposit_verified" });
     }
 
-    // Build compose message (receiver address as bytes for the composer)
-    const composerAddr = CONTRACTS[activeSession.destChainId]?.riseXComposer;
-    const composeMsg = activeSession.userAddress as string; // hex address
+    // Build compose message: abi.encode(address receiver, address target, bytes data)
+    const destContracts = CONTRACTS[activeSession.destChainId];
+    const composerAddr = destContracts?.riseXComposer;
+    const collateralMgr = destContracts?.collateralManager;
+    const destUsdcAddr = getTokenAddress(activeSession.tokenKey, activeSession.destChainId);
+    const bridgedAmount = parseUnits(activeSession.amount, TOKENS[activeSession.tokenKey].decimals);
+
+    // Encode the deposit(address account, address token, uint256 amount) calldata
+    const depositCalldata = encodeFunctionData({
+      abi: [{
+        name: "deposit",
+        type: "function",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "account", type: "address" },
+          { name: "token", type: "address" },
+          { name: "amount", type: "uint256" },
+        ],
+        outputs: [],
+      }],
+      functionName: "deposit",
+      args: [
+        activeSession.userAddress as Address,   // account = user
+        destUsdcAddr as Address,                // token = USDC on RISE
+        bridgedAmount,                          // amount
+      ],
+    });
+
+    // Encode the full compose message: (address receiver, address target, bytes data)
+    const composeMsg = encodeAbiParameters(
+      parseAbiParameters("address receiver, address target, bytes data"),
+      [
+        activeSession.userAddress as Address,   // receiver = must match request receiver
+        collateralMgr as Address,               // target = collateral manager
+        depositCalldata,                        // data = deposit calldata
+      ],
+    );
 
     // Submit to real bridge API
     try {
