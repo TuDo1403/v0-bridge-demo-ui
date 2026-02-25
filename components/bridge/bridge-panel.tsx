@@ -17,7 +17,7 @@ import {
   type Address,
 } from "viem";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { riseGlobalDepositAbi, erc20Abi } from "@/lib/abi";
+import { riseGlobalDepositAbi, erc20Abi, oftConversionRateAbi } from "@/lib/abi";
 import { CHAINS } from "@/config/chains";
 import {
   TOKENS,
@@ -203,6 +203,33 @@ export function BridgePanel() {
   // feeConfig returns [feeBps: uint16, feeCollector: address]
   const feeBps = feeConfig ? BigInt((feeConfig as [number, string])[0]) : 50n; // default 0.5%
 
+  // --- Read tokenConfig to get OFT address, then query decimalConversionRate ---
+  const { data: tokenConfig } = useReadContract({
+    address: globalDepositAddr,
+    abi: riseGlobalDepositAbi,
+    functionName: "getTokenConfig",
+    args: tokenAddress ? [tokenAddress] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !!globalDepositAddr && !!tokenAddress, retry: 3, retryDelay: 2000 },
+  });
+
+  // tokenConfig returns { oft: address, enabled: bool, lzReceiveGas: uint128 }
+  const oftAddress = tokenConfig
+    ? (tokenConfig as { oft: string; enabled: boolean; lzReceiveGas: bigint }).oft as Address
+    : undefined;
+
+  const { data: rawConversionRate } = useReadContract({
+    address: oftAddress,
+    abi: oftConversionRateAbi,
+    functionName: "decimalConversionRate",
+    chainId: sourceChainId,
+    query: { enabled: !!oftAddress, retry: 3, retryDelay: 2000 },
+  });
+
+  // decimalConversionRate: for 6-decimal USDC with 6 shared decimals, rate = 1 (no dust)
+  // for tokens with localDecimals > sharedDecimals, rate = 10^(localDecimals - sharedDecimals)
+  const dustRate = rawConversionRate ? BigInt(rawConversionRate as bigint) : 1n;
+
   // --- Check deposit address balance ---
   const { data: depositBalance, refetch: refetchBalance } = useReadContract({
     address: tokenAddress,
@@ -300,10 +327,14 @@ export function BridgePanel() {
     // Compute net amount after protocol fee deduction
     // fee = grossAmount * feeBps / 10000 (feeBps from on-chain getFeeConfig, default 50 = 0.5%)
     const protocolFee = (grossAmount * feeBps) / 10000n;
-    const netAmount = grossAmount - protocolFee;
+    const afterFee = grossAmount - protocolFee;
+
+    // Remove OFT dust: mirrors on-chain _removeDust: (amount / rate) * rate
+    // dustRate = decimalConversionRate from the OFT contract (default 1 = no dust for 6-dec USDC)
+    const bridgeAmount = (afterFee / dustRate) * dustRate;
 
     // Encode the deposit(address account, address token, uint256 amount) calldata
-    // IMPORTANT: use netAmount (post-fee) since only that amount arrives on destination
+    // IMPORTANT: use bridgeAmount (post-fee, post-dust) since only that amount arrives on destination
     const depositCalldata = encodeFunctionData({
       abi: [{
         name: "deposit",
@@ -320,7 +351,7 @@ export function BridgePanel() {
       args: [
         activeSession.userAddress as Address,   // account = user
         destUsdcAddr as Address,                // token = USDC on RISE
-        netAmount,                              // post-fee amount
+        bridgeAmount,                           // post-fee, post-dust amount
       ],
     });
 
@@ -362,7 +393,7 @@ export function BridgePanel() {
       setError(errMsg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession, feeBps]);
+  }, [activeSession, feeBps, dustRate]);
 
   const startPolling = useCallback(
     (jobId: string, sessionId: string) => {
@@ -982,7 +1013,7 @@ export function BridgePanel() {
           TrackingCard handles its own error display + retry button internally. */}
       {showTrackingView && activeSession && (
         <div className="flex flex-col gap-4">
-          <TrackingCard session={activeSession} feeBps={feeBps} />
+          <TrackingCard session={activeSession} feeBps={feeBps} dustRate={dustRate} />
 
           {/* New bridge button below tracking */}
           <Button

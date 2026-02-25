@@ -121,6 +121,17 @@ export const riseGlobalDepositAbi = [
   { type: "error", name: "ZeroBridgeAmount", inputs: [] },
 ] as const;
 
+/** Minimal ABI for OFT conversion rate query */
+export const oftConversionRateAbi = [
+  {
+    type: "function",
+    name: "decimalConversionRate",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+] as const;
+
 export const erc20Abi = [
   {
     type: "function",

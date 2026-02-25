@@ -81,8 +81,10 @@ export function getGlobalDepositAddress(chainId: number): Address | undefined {
  * This ensures retry always has compose data, even for sessions
  * created before we started storing it.
  *
- * @param feeBps - protocol fee in basis points (default 50 = 0.5%). 
- *                 Query from GlobalDeposit.getFeeConfig() for accuracy.
+ * @param feeBps  - protocol fee in basis points (default 50 = 0.5%). 
+ *                  Query from GlobalDeposit.getFeeConfig() for accuracy.
+ * @param dustRate - OFT decimalConversionRate (default 1 = no dust removal).
+ *                   Query from OFT.decimalConversionRate() for accuracy.
  */
 export function buildComposeData(
   session: {
@@ -92,6 +94,7 @@ export function buildComposeData(
     userAddress: string;
   },
   feeBps: bigint = 50n,
+  dustRate: bigint = 1n,
 ): { composer: string; composeMsg: string } {
   const destContracts = CONTRACTS[session.destChainId];
   const composerAddr = destContracts?.riseXComposer ?? "0x9BF8053c29C533B6238fC4e72a97Eca8016501dd";
@@ -102,7 +105,10 @@ export function buildComposeData(
 
   // Compute net amount after protocol fee deduction
   const protocolFee = (grossAmount * feeBps) / 10000n;
-  const netAmount = grossAmount - protocolFee;
+  const afterFee = grossAmount - protocolFee;
+
+  // Remove OFT dust: mirrors on-chain _removeDust: (amount / rate) * rate
+  const bridgeAmount = (afterFee / dustRate) * dustRate;
 
   const depositCalldata = encodeFunctionData({
     abi: [{
@@ -120,7 +126,7 @@ export function buildComposeData(
     args: [
       session.userAddress as Address,
       (destUsdcAddr ?? "0x6bf6e258b3c5650b448cb1112835048ba5619dc1") as Address,
-      netAmount, // post-fee amount — only this much arrives on destination
+      bridgeAmount, // post-fee, post-dust amount — only this much arrives on destination
     ],
   });
 

@@ -270,7 +270,7 @@ function ComposeBadge({ status, txHash, explorerUrl }: {
 /*  Main tracking card                                                  */
 /* ------------------------------------------------------------------ */
 
-export function TrackingCard({ session, feeBps = 50n }: { session: BridgeSession; feeBps?: bigint }) {
+export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session: BridgeSession; feeBps?: bigint; dustRate?: bigint }) {
   const { updateSession } = useBridgeStore();
   const phase = derivePhase(session);
   const [expanded, setExpanded] = useState(phase === "failed");
@@ -376,7 +376,7 @@ export function TrackingCard({ session, feeBps = 50n }: { session: BridgeSession
                   setRetrying(true);
                   setRetryError(null);
                   try {
-                    const composeData = buildComposeData(session, feeBps);
+                    const composeData = buildComposeData(session, feeBps, dustRate);
                     const res = await retryBridgeJob(session.jobId!, composeData);
                     updateSession(session.id, {
                       status: mapBackendStatus(res.status),
