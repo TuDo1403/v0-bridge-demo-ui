@@ -191,6 +191,18 @@ export function BridgePanel() {
     }
   }, [computedDepositAddr, setDepositAddress]);
 
+  // --- Read fee config from GlobalDeposit contract ---
+  const { data: feeConfig } = useReadContract({
+    address: globalDepositAddr,
+    abi: riseGlobalDepositAbi,
+    functionName: "getFeeConfig",
+    chainId: sourceChainId,
+    query: { enabled: !!globalDepositAddr, retry: 3, retryDelay: 2000 },
+  });
+
+  // feeConfig returns [feeBps: uint16, feeCollector: address]
+  const feeBps = feeConfig ? BigInt((feeConfig as [number, string])[0]) : 50n; // default 0.5%
+
   // --- Check deposit address balance ---
   const { data: depositBalance, refetch: refetchBalance } = useReadContract({
     address: tokenAddress,
@@ -282,9 +294,16 @@ export function BridgePanel() {
     const composerAddr = destContracts?.riseXComposer;
     const collateralMgr = destContracts?.collateralManager;
     const destUsdcAddr = getTokenAddress(activeSession.tokenKey, activeSession.destChainId);
-    const bridgedAmount = parseUnits(activeSession.amount, TOKENS[activeSession.tokenKey].decimals);
+    const decimals = TOKENS[activeSession.tokenKey].decimals;
+    const grossAmount = parseUnits(activeSession.amount, decimals);
+
+    // Compute net amount after protocol fee deduction
+    // fee = grossAmount * feeBps / 10000 (feeBps from on-chain getFeeConfig, default 50 = 0.5%)
+    const protocolFee = (grossAmount * feeBps) / 10000n;
+    const netAmount = grossAmount - protocolFee;
 
     // Encode the deposit(address account, address token, uint256 amount) calldata
+    // IMPORTANT: use netAmount (post-fee) since only that amount arrives on destination
     const depositCalldata = encodeFunctionData({
       abi: [{
         name: "deposit",
@@ -301,7 +320,7 @@ export function BridgePanel() {
       args: [
         activeSession.userAddress as Address,   // account = user
         destUsdcAddr as Address,                // token = USDC on RISE
-        bridgedAmount,                          // amount
+        netAmount,                              // post-fee amount
       ],
     });
 
@@ -343,7 +362,7 @@ export function BridgePanel() {
       setError(errMsg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession]);
+  }, [activeSession, feeBps]);
 
   const startPolling = useCallback(
     (jobId: string, sessionId: string) => {
@@ -963,7 +982,7 @@ export function BridgePanel() {
           TrackingCard handles its own error display + retry button internally. */}
       {showTrackingView && activeSession && (
         <div className="flex flex-col gap-4">
-          <TrackingCard session={activeSession} />
+          <TrackingCard session={activeSession} feeBps={feeBps} />
 
           {/* New bridge button below tracking */}
           <Button

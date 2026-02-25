@@ -20,14 +20,6 @@ export async function POST(request: Request) {
     if (body.composer) retryBody.composer = body.composer;
     if (body.composeMsg) retryBody.composeMsg = body.composeMsg;
 
-    console.log("[bridge/retry] Sending to backend:", {
-      jobId,
-      hasComposer: !!retryBody.composer,
-      hasComposeMsg: !!retryBody.composeMsg,
-      composerLen: retryBody.composer?.length,
-      composeMsgLen: retryBody.composeMsg?.length,
-    });
-
     const res = await fetch(
       `${BRIDGE_API}/v1/bridge/retry/${encodeURIComponent(jobId)}`,
       {

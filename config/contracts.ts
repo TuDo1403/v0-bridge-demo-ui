@@ -80,19 +80,29 @@ export function getGlobalDepositAddress(chainId: number): Address | undefined {
  * Rebuild composer + composeMsg from session fields.
  * This ensures retry always has compose data, even for sessions
  * created before we started storing it.
+ *
+ * @param feeBps - protocol fee in basis points (default 50 = 0.5%). 
+ *                 Query from GlobalDeposit.getFeeConfig() for accuracy.
  */
-export function buildComposeData(session: {
-  destChainId: number;
-  tokenKey: string;
-  amount: string;
-  userAddress: string;
-}): { composer: string; composeMsg: string } {
+export function buildComposeData(
+  session: {
+    destChainId: number;
+    tokenKey: string;
+    amount: string;
+    userAddress: string;
+  },
+  feeBps: bigint = 50n,
+): { composer: string; composeMsg: string } {
   const destContracts = CONTRACTS[session.destChainId];
   const composerAddr = destContracts?.riseXComposer ?? "0x9BF8053c29C533B6238fC4e72a97Eca8016501dd";
   const collateralMgr = destContracts?.collateralManager ?? "0x158fefb2d5635fbecf06ccb1a5129a61abf53753";
   const destUsdcAddr = getTokenAddress(session.tokenKey, session.destChainId);
   const decimals = TOKENS[session.tokenKey]?.decimals ?? 6;
-  const bridgedAmount = parseUnits(session.amount, decimals);
+  const grossAmount = parseUnits(session.amount, decimals);
+
+  // Compute net amount after protocol fee deduction
+  const protocolFee = (grossAmount * feeBps) / 10000n;
+  const netAmount = grossAmount - protocolFee;
 
   const depositCalldata = encodeFunctionData({
     abi: [{
@@ -110,7 +120,7 @@ export function buildComposeData(session: {
     args: [
       session.userAddress as Address,
       (destUsdcAddr ?? "0x6bf6e258b3c5650b448cb1112835048ba5619dc1") as Address,
-      bridgedAmount,
+      netAmount, // post-fee amount — only this much arrives on destination
     ],
   });
 

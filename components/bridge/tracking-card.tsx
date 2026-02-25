@@ -270,7 +270,7 @@ function ComposeBadge({ status, txHash, explorerUrl }: {
 /*  Main tracking card                                                  */
 /* ------------------------------------------------------------------ */
 
-export function TrackingCard({ session }: { session: BridgeSession }) {
+export function TrackingCard({ session, feeBps = 50n }: { session: BridgeSession; feeBps?: bigint }) {
   const { updateSession } = useBridgeStore();
   const phase = derivePhase(session);
   const [expanded, setExpanded] = useState(phase === "failed");
@@ -376,11 +376,7 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                   setRetrying(true);
                   setRetryError(null);
                   try {
-                    const composeData = buildComposeData(session);
-                    console.log("[v0] Retry with compose data:", {
-                      composer: composeData.composer.slice(0, 10) + "...",
-                      composeMsgLen: composeData.composeMsg.length,
-                    });
+                    const composeData = buildComposeData(session, feeBps);
                     const res = await retryBridgeJob(session.jobId!, composeData);
                     updateSession(session.id, {
                       status: mapBackendStatus(res.status),
@@ -388,7 +384,6 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                     });
                   } catch (err) {
                     const msg = err instanceof Error ? err.message : "Retry failed";
-                    console.error("[v0] Retry error:", msg);
                     setRetryError(msg);
                   } finally {
                     setRetrying(false);
