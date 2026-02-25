@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { useAccount, useReadContract } from "wagmi";
 import { riseGlobalDepositAbi, erc20Abi } from "@/lib/abi";
 import { useBridgeStore } from "@/lib/bridge-store";
@@ -134,37 +133,6 @@ export function InfoPanel() {
       retryDelay: 2000,
     },
   });
-
-  // Debug: log RPC responses
-  useEffect(() => {
-    console.log("[v0] InfoPanel RPC state:", {
-      globalDepositAddr,
-      tokenAddress,
-      address,
-      depositAddress,
-      feeConfig,
-      isFeeError,
-      dstEid,
-      isDstEidError,
-      walletBalance,
-      isWalletBalError,
-      depositBal,
-      isDepBalError,
-    });
-  }, [
-    globalDepositAddr,
-    tokenAddress,
-    address,
-    depositAddress,
-    feeConfig,
-    isFeeError,
-    dstEid,
-    isDstEidError,
-    walletBalance,
-    isWalletBalError,
-    depositBal,
-    isDepBalError,
-  ]);
 
   // Format fee: feeConfig returns [feeBps, feeCollector]
   const feeBps =

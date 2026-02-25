@@ -136,3 +136,24 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Smooth scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.30 0.008 260);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.40 0.008 260);
+}
+
+/* Tabular nums for monospace numbers */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

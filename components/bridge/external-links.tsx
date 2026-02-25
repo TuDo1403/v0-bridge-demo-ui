@@ -4,10 +4,10 @@ import { ExternalLink } from "lucide-react";
 import { EXTERNAL_LINKS } from "@/config/chains";
 
 const links = [
-  { label: "LZ Tools", url: EXTERNAL_LINKS.lzTools },
-  { label: "LZ API", url: EXTERNAL_LINKS.lzApi },
+  { label: "LZ Scan", url: EXTERNAL_LINKS.lzTools },
+  { label: "API", url: EXTERNAL_LINKS.lzApi },
   { label: "OFT Docs", url: EXTERNAL_LINKS.oftDocs },
-  { label: "RISE Portfolio", url: EXTERNAL_LINKS.risePortfolio },
+  { label: "Portfolio", url: EXTERNAL_LINKS.risePortfolio },
 ];
 
 export function ExternalLinksBar() {
@@ -19,7 +19,7 @@ export function ExternalLinksBar() {
           href={link.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hover:text-primary transition-colors"
+          className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60 hover:text-primary transition-colors"
         >
           {link.label}
           <ExternalLink className="h-2.5 w-2.5" />

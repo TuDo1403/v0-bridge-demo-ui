@@ -18,13 +18,13 @@ import {
   getTokenAddress,
   getGlobalDepositAddress,
 } from "@/config/contracts";
-import { BRIDGE_ROUTES, lzScanMessageUrl } from "@/config/chains";
+import { BRIDGE_ROUTES } from "@/config/chains";
 import {
   submitBridgeProcess,
   pollBridgeStatus,
   isTerminalStatus,
 } from "@/lib/bridge-service";
-import { CONTRACT_ERROR_MAP, type BridgeStatus } from "@/lib/types";
+import { CONTRACT_ERROR_MAP, type BridgeStatus, type BridgeSession } from "@/lib/types";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusRail } from "./status-rail";
+import { TrackingCard } from "./tracking-card";
 import { TxBadge } from "./tx-badge";
 import {
   ArrowDown,
@@ -143,16 +144,9 @@ export function BridgePanel() {
 
   useEffect(() => {
     if (computedDepositAddr) {
-      console.log("[v0] computeDepositAddress result:", computedDepositAddr);
       setDepositAddress(computedDepositAddr as string);
     }
   }, [computedDepositAddr, setDepositAddress]);
-
-  useEffect(() => {
-    if (isComputeError) {
-      console.log("[v0] computeDepositAddress ERROR - contract:", globalDepositAddr, "user:", address, "chainId:", sourceChainId);
-    }
-  }, [isComputeError, globalDepositAddr, address, sourceChainId]);
 
   // --- Check deposit address balance ---
   const { data: depositBalance, refetch: refetchBalance } = useReadContract({
@@ -261,14 +255,22 @@ export function BridgePanel() {
       pollingRef.current = setInterval(async () => {
         try {
           const status = await pollBridgeStatus(jobId);
-          updateSession(sessionId, {
+
+          const sessionUpdates: Partial<BridgeSession> = {
             status: status.status as BridgeStatus,
             backendProcessTxHash: status.backendProcessTxHash,
             lzMessageId: status.lzMessageId,
             lzTxHash: status.lzTxHash,
             destinationTxHash: status.destinationTxHash,
             error: status.error,
-          });
+          };
+
+          // Merge LZ tracking snapshot from backend
+          if (status.lzTracking) {
+            sessionUpdates.lzTracking = status.lzTracking;
+          }
+
+          updateSession(sessionId, sessionUpdates);
 
           if (isTerminalStatus(status.status)) {
             if (pollingRef.current) clearInterval(pollingRef.current);
@@ -282,7 +284,7 @@ export function BridgePanel() {
         } catch {
           // Polling error, will retry on next tick
         }
-      }, 5000);
+      }, 4000);
     },
     [updateSession]
   );
@@ -677,70 +679,10 @@ export function BridgePanel() {
         </div>
       )}
 
-      {/* --- POLLING STEP --- */}
+      {/* --- POLLING STEP (with interactive tracking card) --- */}
       {step === "polling" && activeSession && (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 px-3 py-2 rounded bg-primary/5 border border-primary/20">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            <span className="text-sm font-mono text-foreground">
-              Processing bridge transaction...
-            </span>
-          </div>
-
-          {/* All tx badges */}
-          <div className="flex flex-col gap-1.5">
-            <TxBadge
-              label="Source"
-              hash={activeSession.userTransferTxHash}
-              explorerUrl={
-                activeSession.userTransferTxHash
-                  ? sourceChain?.explorerTxUrl(activeSession.userTransferTxHash)
-                  : undefined
-              }
-            />
-            <TxBadge
-              label="Backend"
-              hash={activeSession.backendProcessTxHash}
-              explorerUrl={
-                activeSession.backendProcessTxHash
-                  ? sourceChain?.explorerTxUrl(
-                      activeSession.backendProcessTxHash
-                    )
-                  : undefined
-              }
-            />
-            <TxBadge
-              label="LZ Msg"
-              hash={activeSession.lzMessageId}
-              explorerUrl={
-                activeSession.lzTxHash
-                  ? lzScanMessageUrl(
-                      CHAINS[sourceChainId]?.lzEid ?? 0,
-                      activeSession.lzTxHash
-                    )
-                  : undefined
-              }
-            />
-            <TxBadge
-              label="Dest Tx"
-              hash={activeSession.destinationTxHash}
-              explorerUrl={
-                activeSession.destinationTxHash
-                  ? destChain?.explorerTxUrl(activeSession.destinationTxHash)
-                  : undefined
-              }
-            />
-          </div>
-
-          {/* Rescue hint */}
-          {activeSession.status === "backend_submitted" && (
-            <div className="mt-2 px-3 py-2 rounded bg-muted/30 border border-border text-[11px] font-mono text-muted-foreground">
-              <span className="text-warning">Stalled?</span> If the backend
-              does not process within a reasonable time, you can call{" "}
-              <code className="text-foreground">rescueFunds()</code> on the
-              GlobalDeposit contract to recover your tokens.
-            </div>
-          )}
+        <div className="flex flex-col gap-4">
+          <TrackingCard session={activeSession} />
 
           {error && (
             <Button
@@ -757,56 +699,8 @@ export function BridgePanel() {
 
       {/* --- COMPLETE STEP --- */}
       {step === "complete" && activeSession && (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 px-3 py-3 rounded bg-success/10 border border-success/20">
-            <div className="h-2 w-2 rounded-full bg-success" />
-            <span className="text-sm font-mono text-success">
-              Bridge completed successfully
-            </span>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <TxBadge
-              label="Source"
-              hash={activeSession.userTransferTxHash}
-              explorerUrl={
-                activeSession.userTransferTxHash
-                  ? sourceChain?.explorerTxUrl(activeSession.userTransferTxHash)
-                  : undefined
-              }
-            />
-            <TxBadge
-              label="Dest"
-              hash={activeSession.destinationTxHash}
-              explorerUrl={
-                activeSession.destinationTxHash
-                  ? destChain?.explorerTxUrl(activeSession.destinationTxHash)
-                  : undefined
-              }
-            />
-            <TxBadge
-              label="LZ"
-              hash={activeSession.lzTxHash}
-              explorerUrl={
-                activeSession.lzTxHash
-                  ? lzScanMessageUrl(
-                      CHAINS[sourceChainId]?.lzEid ?? 0,
-                      activeSession.lzTxHash
-                    )
-                  : undefined
-              }
-            />
-          </div>
-
-          <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-            <span>
-              Bridged {activeSession.amount} {token?.symbol}
-            </span>
-            <span className="text-muted-foreground/30">|</span>
-            <span>
-              {sourceChain?.shortLabel} -{">"} {destChain?.shortLabel}
-            </span>
-          </div>
+        <div className="flex flex-col gap-4">
+          <TrackingCard session={activeSession} />
 
           <Button
             onClick={handleRetry}

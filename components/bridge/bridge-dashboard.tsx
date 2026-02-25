@@ -4,11 +4,12 @@ import { BridgeHeader } from "./header";
 import { BridgePanel } from "./bridge-panel";
 import { InfoPanel } from "./info-panel";
 import { RecentSessions } from "./recent-sessions";
+import { ExternalLinksBar } from "./external-links";
 
 export function BridgeDashboard() {
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-6">
         {/* Header */}
         <BridgeHeader />
 
@@ -28,7 +29,7 @@ export function BridgeDashboard() {
           </main>
 
           {/* Right: Info + Recent sessions */}
-          <aside className="w-full lg:w-72 shrink-0 flex flex-col gap-4">
+          <aside className="w-full lg:w-80 shrink-0 flex flex-col gap-4">
             <div className="p-4 rounded-lg border border-border bg-card">
               <InfoPanel />
             </div>
@@ -39,8 +40,11 @@ export function BridgeDashboard() {
         </div>
 
         {/* Footer */}
-        <footer className="mt-8 pb-4 flex items-center justify-between text-[10px] font-mono text-muted-foreground/40">
+        <footer className="mt-8 pb-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground/40">
           <span>RISE Global Deposit Bridge v0.1.0</span>
+          <div className="flex items-center gap-4">
+            <ExternalLinksBar />
+          </div>
           <span>Testnet Only</span>
         </footer>
       </div>

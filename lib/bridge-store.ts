@@ -103,14 +103,25 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   },
 
   updateSession: (id, updates) => {
-    const sessions = get().recentSessions.map((s) =>
-      s.id === id ? { ...s, ...updates } : s
-    );
+    const sessions = get().recentSessions.map((s) => {
+      if (s.id !== id) return s;
+      // Deep-merge lzTracking so we never lose fields
+      const merged = { ...s, ...updates };
+      if (updates.lzTracking && s.lzTracking) {
+        merged.lzTracking = { ...s.lzTracking, ...updates.lzTracking };
+      }
+      return merged;
+    });
     saveSessions(sessions);
 
     const active = get().activeSession;
-    const updatedActive =
-      active?.id === id ? { ...active, ...updates } : active;
+    let updatedActive = active;
+    if (active?.id === id) {
+      updatedActive = { ...active, ...updates };
+      if (updates.lzTracking && active.lzTracking) {
+        updatedActive!.lzTracking = { ...active.lzTracking, ...updates.lzTracking };
+      }
+    }
 
     set({ recentSessions: sessions, activeSession: updatedActive });
   },
