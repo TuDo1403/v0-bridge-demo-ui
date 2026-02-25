@@ -100,32 +100,28 @@ export function BridgePanel() {
     if (!activeSession) return;
 
     const s = activeSession.status;
-    // Failed / error: show tracking card if we have a jobId, otherwise form with error
+
+    // Session has a jobId -- it interacted with the backend. Always show tracking.
+    if (activeSession.jobId) {
+      if (activeSession.error) {
+        setError(activeSession.error);
+      }
+      // If it's still in-progress, resume polling
+      if (!isTerminalStatus(s) && s !== "idle" && s !== "error" && s !== "failed") {
+        setStep("polling");
+        startPolling(activeSession.jobId, activeSession.id);
+      } else {
+        // failed / error / idle-with-jobId / completed -- show tracking (no polling)
+        setStep("polling");
+      }
+      return;
+    }
+
+    // No jobId -- pure client-side states
+    // Failed / error without jobId: show form with error
     if (s === "error" || s === "failed") {
       setError(activeSession.error ?? "Bridge transaction failed.");
-      setStep(activeSession.jobId ? "polling" : "form");
-      return;
-    }
-
-    // Completed: show complete step
-    if (s === "completed") {
-      setStep("complete");
-      return;
-    }
-
-    // In-progress with a jobId: resume polling
-    if (
-      activeSession.jobId &&
-      !isTerminalStatus(s) &&
-      [
-        "source_verified", "bridge_submitted", "bridge_mined",
-        "backend_submitted", "lz_indexing", "lz_pending",
-        "destination_confirmed",
-      ].includes(s)
-    ) {
-      setError(null);
-      setStep("polling");
-      startPolling(activeSession.jobId, activeSession.id);
+      setStep("form");
       return;
     }
 
@@ -141,6 +137,7 @@ export function BridgePanel() {
     }
 
     // Default: form
+    setError(null);
     setStep("form");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSession?.id, activeSession?.status, sessionSelectedAt]);
@@ -470,23 +467,13 @@ export function BridgePanel() {
   const sourceChain = CHAINS[sourceChainId];
   const destChain = CHAINS[destChainId];
 
-  // Data-driven flag: show tracking view when session has progressed past initial steps
+  // Data-driven flag: show tracking view whenever the session has a jobId
+  // (meaning the backend was involved). This works regardless of status --
+  // even if status was reset to "idle" by a retry or "Start Over".
   const showTrackingView = !!(
     activeSession &&
-    activeSession.status !== "idle" &&
-    activeSession.status !== "awaiting_transfer" &&
-    (activeSession.userTransferTxHash || activeSession.jobId)
+    (activeSession.jobId || (activeSession.userTransferTxHash && activeSession.status !== "idle"))
   );
-
-  console.log("[v0] render state:", {
-    step,
-    showTrackingView,
-    activeSessionId: activeSession?.id,
-    status: activeSession?.status,
-    jobId: activeSession?.jobId,
-    txHash: activeSession?.userTransferTxHash,
-    error: activeSession?.error,
-  });
 
   // Dust amount warning
   const parsedAmount =
@@ -955,8 +942,8 @@ export function BridgePanel() {
         <div className="flex flex-col gap-4">
           <TrackingCard session={activeSession} />
 
-          {/* Error/failed: prominent retry */}
-          {(activeSession.status === "error" || activeSession.status === "failed") && (
+          {/* Error/failed: prominent retry -- also show when session has error field regardless of status */}
+          {(activeSession.status === "error" || activeSession.status === "failed" || activeSession.error) && (
             <div className="flex flex-col gap-3 p-4 rounded-lg border border-destructive/30 bg-destructive/5">
               <div className="flex items-start gap-2 text-xs font-mono text-destructive-foreground">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -990,7 +977,8 @@ export function BridgePanel() {
                   variant="ghost"
                   onClick={() => {
                     setError(null);
-                    updateSession(activeSession.id, { status: "idle", error: undefined });
+                    // Deselect the failed session and reset to a fresh form
+                    setActiveSession(null);
                     setStep("form");
                     resetForm();
                   }}

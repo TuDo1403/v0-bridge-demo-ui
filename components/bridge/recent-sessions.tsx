@@ -108,15 +108,8 @@ function SessionRow({
     <div className="flex flex-col gap-1">
       <button
         onClick={() => {
-          console.log("[v0] session row clicked:", {
-            id: session.id,
-            status: session.status,
-            jobId: session.jobId,
-            txHash: session.userTransferTxHash,
-            error: session.error,
-            isActive,
-          });
-          if (isActive && session.status === "idle") {
+          // Only toggle off if truly idle with no backend job
+          if (isActive && session.status === "idle" && !session.jobId) {
             setActiveSession(null);
           } else {
             setActiveSession(session);
