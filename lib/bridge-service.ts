@@ -59,6 +59,28 @@ export async function retryBridgeJob(
   return res.json();
 }
 
+/**
+ * Look up a bridge job by any associated tx hash.
+ * Calls GET /v1/bridge/status/tx/{txHash} via our proxy.
+ * Returns null if no job matches (404).
+ */
+export async function lookupByTxHash(
+  txHash: string
+): Promise<BridgeStatusResponse | null> {
+  const res = await fetch(
+    `${API_BASE}/status-tx?txHash=${encodeURIComponent(txHash)}`
+  );
+
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error ?? `Lookup failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
 export function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "error" || status === "failed";
 }

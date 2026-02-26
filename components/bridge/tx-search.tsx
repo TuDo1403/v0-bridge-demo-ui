@@ -14,6 +14,9 @@ import {
 import { cn } from "@/lib/utils";
 import { normalizeLzStatus, type LzTrackingData } from "@/lib/layerzero";
 import { CHAINS, LZ_SCAN_BASE } from "@/config/chains";
+import { lookupByTxHash } from "@/lib/bridge-service";
+import type { BridgeStatusResponse } from "@/lib/types";
+import { STATUS_LABELS } from "@/lib/types";
 import {
   Search,
   Loader2,
@@ -500,6 +503,212 @@ function LzResultCard({
 }
 
 /* ------------------------------------------------------------------ */
+/*  BackendJobCard – shows rich data from our bridge backend           */
+/* ------------------------------------------------------------------ */
+
+function BackendJobCard({ job }: { job: BridgeStatusResponse }) {
+  const [expanded, setExpanded] = useState(true);
+
+  const srcChain = Object.values(CHAINS).find((c) => c.chainId === job.sourceChainId);
+  const dstChain = Object.values(CHAINS).find((c) => c.chainId === job.dstChainId);
+
+  const isComplete = job.status === "completed";
+  const isFailed = job.status === "failed";
+  const composeFailed =
+    job.composeStatus?.toLowerCase().includes("fail") ||
+    job.composeStatus?.toLowerCase().includes("revert");
+
+  const effectiveFailed = isFailed || composeFailed;
+
+  const borderClass = cn(
+    "rounded-lg border transition-all duration-500",
+    isComplete && !composeFailed && "border-success/40 bg-success/5",
+    effectiveFailed && "border-destructive/40 bg-destructive/5",
+    !isComplete && !effectiveFailed && "border-primary/30 bg-primary/5",
+  );
+
+  const statusLabel = STATUS_LABELS[job.status as keyof typeof STATUS_LABELS] ?? job.status;
+
+  return (
+    <div className={borderClass}>
+      <div className="px-4 py-3 flex items-center gap-3">
+        <div className={cn(
+          "shrink-0",
+          isComplete && !composeFailed && "text-success",
+          effectiveFailed && "text-destructive-foreground",
+          !isComplete && !effectiveFailed && "text-primary",
+        )}>
+          {isComplete && !composeFailed ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : effectiveFailed ? (
+            <XCircle className="h-4 w-4" />
+          ) : (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          )}
+        </div>
+
+        <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/60">Bridge Job</span>
+            <span className={cn(
+              "text-[10px] font-mono px-1.5 py-0.5 rounded",
+              isComplete && !composeFailed && "bg-success/10 text-success",
+              effectiveFailed && "bg-destructive/10 text-destructive-foreground",
+              !isComplete && !effectiveFailed && "bg-primary/10 text-primary",
+            )}>
+              {composeFailed ? "Compose Failed" : statusLabel}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground flex-wrap">
+            {srcChain && (
+              <>
+                <ChainIcon chainKey={srcChain.iconKey} className="h-3 w-3 shrink-0" />
+                <span>{srcChain.shortLabel}</span>
+              </>
+            )}
+            <ArrowRight className="h-2.5 w-2.5 shrink-0" />
+            {dstChain && (
+              <>
+                <ChainIcon chainKey={dstChain.iconKey} className="h-3 w-3 shrink-0" />
+                <span>{dstChain.shortLabel}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="shrink-0 text-muted-foreground hover:text-foreground transition-colors p-1"
+        >
+          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="px-4 pb-4 flex flex-col gap-3 border-t border-border/50 pt-3">
+          {/* Job ID */}
+          <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+            <span className="text-muted-foreground/60">Job ID:</span>
+            <span className="text-foreground">{job.jobId}</span>
+          </div>
+
+          {/* Amount breakdown */}
+          <div className="p-2.5 rounded-md bg-muted/30 border border-border/50">
+            <div className="flex items-center gap-3">
+              <TokenIcon tokenKey="usdc" className="h-5 w-5 shrink-0" />
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-xs font-mono font-medium text-foreground">{job.amount} USDC</span>
+                <span className="text-[9px] font-mono text-muted-foreground">
+                  {srcChain?.shortLabel ?? "Source"} to {dstChain?.shortLabel ?? "Dest"}
+                </span>
+              </div>
+            </div>
+            {(job.feeAmount || job.netAmount) && (
+              <div className="mt-2 pt-2 border-t border-border/30 grid grid-cols-3 gap-2 text-[10px] font-mono">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Sent</span>
+                  <span className="text-foreground">{job.amount}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Fee</span>
+                  <span className="text-chart-4">{job.feeAmount ?? "--"}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Net Received</span>
+                  <span className="text-success">{job.netAmount ?? "--"}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* All transaction hashes */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">Transactions</span>
+            {job.userTransferTxHash && (
+              <TxBadge
+                label="User Tx"
+                hash={job.userTransferTxHash}
+                explorerUrl={srcChain?.explorerTxUrl(job.userTransferTxHash)}
+              />
+            )}
+            {job.backendProcessTxHash && (
+              <TxBadge
+                label="Backend Tx"
+                hash={job.backendProcessTxHash}
+                explorerUrl={srcChain?.explorerTxUrl(job.backendProcessTxHash)}
+              />
+            )}
+            {job.lzMessageId && (
+              <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                <span className="text-muted-foreground/60 w-16 shrink-0">LZ Msg</span>
+                <span className="text-foreground truncate">{job.lzMessageId.slice(0, 10)}...{job.lzMessageId.slice(-8)}</span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(job.lzMessageId!)}
+                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                >
+                  <Copy className="h-2.5 w-2.5" />
+                </button>
+              </div>
+            )}
+            {job.destinationTxHash && (
+              <TxBadge
+                label="Dest Tx"
+                hash={job.destinationTxHash}
+                explorerUrl={dstChain?.explorerTxUrl(job.destinationTxHash)}
+              />
+            )}
+            {job.composeTxHash && (
+              <TxBadge
+                label="Compose Tx"
+                hash={job.composeTxHash}
+                explorerUrl={dstChain?.explorerTxUrl(job.composeTxHash)}
+              />
+            )}
+          </div>
+
+          {/* Compose status */}
+          {job.composeStatus && (
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">Compose</span>
+              <span
+                className={cn(
+                  "text-[10px] font-mono px-1.5 py-0.5 rounded",
+                  composeFailed && "bg-destructive/10 text-destructive-foreground",
+                  !composeFailed && job.composeStatus.toLowerCase().includes("execut") && "bg-success/10 text-success",
+                  !composeFailed && !job.composeStatus.toLowerCase().includes("execut") && "bg-muted/50 text-muted-foreground",
+                )}
+              >
+                {job.composeStatus}
+              </span>
+            </div>
+          )}
+
+          {/* Addresses */}
+          <div className="grid grid-cols-2 gap-2">
+            <Addr label="Sender" address={job.sender ?? undefined} />
+            <Addr label="Receiver" address={job.receiver} />
+          </div>
+
+          {/* Error */}
+          {job.error && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-xs font-mono text-destructive-foreground">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span>{job.error}</span>
+            </div>
+          )}
+
+          {/* Timestamps */}
+          <div className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
+            {job.createdAt && <span>Created: {new Date(job.createdAt).toLocaleString()}</span>}
+            {job.updatedAt && <span>Updated: {new Date(job.updatedAt).toLocaleString()}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  TxSearch – the search bar + result display                         */
 /* ------------------------------------------------------------------ */
 
@@ -515,6 +724,7 @@ export function TxSearch({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SearchResult | null>(null);
+  const [backendJob, setBackendJob] = useState<BridgeStatusResponse | null>(null);
   const [pollingActive, setPollingActive] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -584,17 +794,41 @@ export function TxSearch({
     if (!query.trim()) return;
     setLoading(true);
     setResult(null);
+    setBackendJob(null);
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     setPollingActive(false);
 
-    const data = await doLookup(query);
+    // Query both our backend and LZ Scan in parallel
+    const trimmed = query.trim();
+    const isHexHash = /^0x[0-9a-fA-F]{64}$/.test(trimmed);
+
+    const [backendResult, lzResult] = await Promise.all([
+      // Only query backend for hex hashes (tx hashes / GUIDs)
+      isHexHash
+        ? lookupByTxHash(trimmed).catch(() => null)
+        : Promise.resolve(null),
+      doLookup(trimmed),
+    ]);
+
+    if (backendResult) setBackendJob(backendResult);
     setLoading(false);
 
-    // If the message is not terminal, start auto-refresh polling
-    if (data && data.status !== "lz_delivered" && data.status !== "lz_failed") {
+    // If neither returned data
+    if (!backendResult && !lzResult) {
+      // Error already set by doLookup
+      return;
+    }
+
+    // If the LZ message is not terminal, start auto-refresh polling
+    if (lzResult && lzResult.status !== "lz_delivered" && lzResult.status !== "lz_failed") {
       setPollingActive(true);
       pollRef.current = setInterval(async () => {
-        const updated = await doLookup(query, true);
+        const updated = await doLookup(trimmed, true);
+        // Also refresh backend data
+        if (isHexHash) {
+          const updatedJob = await lookupByTxHash(trimmed).catch(() => null);
+          if (updatedJob) setBackendJob(updatedJob);
+        }
         if (updated && (updated.status === "lz_delivered" || updated.status === "lz_failed")) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
@@ -614,6 +848,7 @@ export function TxSearch({
 
   const handleClose = useCallback(() => {
     setResult(null);
+    setBackendJob(null);
     setError(null);
     setQuery("");
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -675,8 +910,20 @@ export function TxSearch({
         </div>
       )}
 
-      {/* Result card */}
-      {result && <LzResultCard data={result} onClose={handleClose} />}
+      {/* Backend job info (rich data from our bridge API) */}
+      {backendJob && <BackendJobCard job={backendJob} />}
+
+      {/* LZ Scan cross-chain tracking */}
+      {result && (
+        <div className="flex flex-col gap-1">
+          {backendJob && (
+            <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground px-1">
+              LayerZero Cross-Chain Tracking
+            </span>
+          )}
+          <LzResultCard data={result} onClose={handleClose} />
+        </div>
+      )}
     </div>
   );
 }
