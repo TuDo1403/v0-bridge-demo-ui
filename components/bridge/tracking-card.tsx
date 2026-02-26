@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { retryBridgeJob } from "@/lib/bridge-service";
+import { retryBridgeJob, submitBridgeProcess } from "@/lib/bridge-service";
 import { mapBackendStatus } from "@/lib/types";
 import { CHAINS, lzScanMessageUrl, LZ_SCAN_BASE } from "@/config/chains";
-import { TOKENS, buildComposeData } from "@/config/contracts";
+import { TOKENS, buildComposeData, getTokenAddress } from "@/config/contracts";
 import type { BridgeSession, LzTrackingSnapshot } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 import { TxBadge } from "./tx-badge";
@@ -533,45 +533,70 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
                   the GlobalDeposit contract to recover your tokens.
                 </div>
               </div>
-              {session.jobId && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={retrying}
-                    className="font-mono text-xs gap-1.5 border-warning/30 hover:bg-warning/10 text-warning"
-                    onClick={async () => {
-                      setRetrying(true);
-                      setRetryError(null);
-                      try {
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={retrying}
+                  className="font-mono text-xs gap-1.5 border-warning/30 hover:bg-warning/10 text-warning"
+                  onClick={async () => {
+                    setRetrying(true);
+                    setRetryError(null);
+                    try {
+                      if (session.jobId) {
+                        // Job exists on backend -- retry it
                         const composeData = buildComposeData(session, feeBps, dustRate);
-                        const res = await retryBridgeJob(session.jobId!, composeData);
+                        const res = await retryBridgeJob(session.jobId, composeData);
                         updateSession(session.id, {
                           status: mapBackendStatus(res.status),
                           error: undefined,
                         });
-                      } catch (err) {
-                        const msg = err instanceof Error ? err.message : "Nudge failed";
-                        setRetryError(msg);
-                      } finally {
-                        setRetrying(false);
+                      } else if (session.userTransferTxHash) {
+                        // No job yet -- re-submit to process endpoint
+                        const composeData = buildComposeData(session, feeBps, dustRate);
+                        const token = getTokenAddress(session.tokenKey, session.sourceChainId);
+                        if (!token) throw new Error("Token address not found");
+                        const res = await submitBridgeProcess({
+                          sourceChainId: session.sourceChainId,
+                          userTransferTxHash: session.userTransferTxHash,
+                          token,
+                          receiver: session.userAddress,
+                          composer: composeData.composer,
+                          composeMsg: composeData.composeMsg,
+                        });
+                        updateSession(session.id, {
+                          status: mapBackendStatus(res.status),
+                          jobId: res.jobId,
+                          backendProcessTxHash: res.backendProcessTxHash ?? undefined,
+                          composer: composeData.composer,
+                          composeMsg: composeData.composeMsg,
+                          error: undefined,
+                        });
                       }
-                    }}
-                  >
-                    {retrying ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-3 w-3" />
-                    )}
-                    {retrying ? "Nudging..." : "Nudge Backend"}
-                  </Button>
-                  {retryError && (
-                    <span className="text-[10px] font-mono text-destructive-foreground">
-                      {retryError}
-                    </span>
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : "Nudge failed";
+                      setRetryError(msg);
+                    } finally {
+                      setRetrying(false);
+                    }
+                  }}
+                >
+                  {retrying ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3 w-3" />
                   )}
-                </div>
-              )}
+                  {retrying
+                    ? session.jobId ? "Retrying..." : "Submitting..."
+                    : session.jobId ? "Retry Backend" : "Submit to Backend"
+                  }
+                </Button>
+                {retryError && (
+                  <span className="text-[10px] font-mono text-destructive-foreground">
+                    {retryError}
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
