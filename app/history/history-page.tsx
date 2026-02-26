@@ -5,45 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { useAccount } from "wagmi";
+import { formatUnits } from "viem";
 import { PageShell } from "@/components/bridge/page-shell";
 import { fetchHistory } from "@/lib/bridge-service";
 import type { BridgeStatusResponse } from "@/lib/types";
-import { formatUnits } from "viem";
 import { CHAINS, LZ_SCAN_BASE } from "@/config/chains";
 import { TOKENS } from "@/config/contracts";
 import { TxBadge } from "@/components/bridge/tx-badge";
-
-/** Resolve decimals from a token contract address */
-function resolveTokenDecimals(tokenAddr: string): number {
-  const lower = tokenAddr.toLowerCase();
-  for (const t of Object.values(TOKENS)) {
-    for (const addr of Object.values(t.addresses)) {
-      if (addr.toLowerCase() === lower) return t.decimals;
-    }
-  }
-  return 6;
-}
-
-function resolveTokenSymbol(tokenAddr: string): string {
-  const lower = tokenAddr.toLowerCase();
-  for (const t of Object.values(TOKENS)) {
-    for (const addr of Object.values(t.addresses)) {
-      if (addr.toLowerCase() === lower) return t.symbol;
-    }
-  }
-  return "USDC";
-}
-
-/** Format a raw amount string with proper decimals */
-function fmtAmt(raw: string | null | undefined, decimals: number): string {
-  if (!raw) return "--";
-  try {
-    const n = Number(formatUnits(BigInt(raw), decimals));
-    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: decimals });
-  } catch {
-    return raw;
-  }
-}
 import { ChainIcon, TokenIcon } from "@/components/bridge/chain-icon";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
