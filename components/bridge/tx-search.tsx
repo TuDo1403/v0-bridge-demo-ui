@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TxBadge } from "./tx-badge";
@@ -533,8 +534,8 @@ function LzResultCard({
 function BackendJobCard({ job }: { job: BridgeStatusResponse }) {
   const [expanded, setExpanded] = useState(true);
 
-  const srcChain = Object.values(CHAINS).find((c) => c.chainId === job.sourceChainId);
-  const dstChain = Object.values(CHAINS).find((c) => c.chainId === job.dstChainId);
+  const srcChain = CHAINS[Number(job.sourceChainId)] ?? Object.values(CHAINS).find((c) => c.chain.id === Number(job.sourceChainId));
+  const dstChain = CHAINS[Number(job.dstChainId)] ?? Object.values(CHAINS).find((c) => c.chain.id === Number(job.dstChainId));
   const decimals = resolveTokenDecimals(job.token);
   const tokenSymbol = Object.values(TOKENS).find(
     (t) => Object.values(t.addresses).some((a) => a.toLowerCase() === job.token.toLowerCase())
@@ -748,6 +749,8 @@ export function TxSearch({
   /** Hint which LZ Scan endpoint to try first */
   lookupType?: "tx" | "guid";
 } = {}) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [query, setQuery] = useState(initialHash ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -853,6 +856,16 @@ export function TxSearch({
     // Clear "not found" error if backend returned data but LZ didn't
     if (backendResult && !lzResult) {
       setError(null);
+    }
+
+    // Update URL to reflect the searched hash (only on /track pages)
+    if ((backendResult || lzResult) && pathname?.startsWith("/track")) {
+      const targetUrl = lookupType === "guid"
+        ? `/track/guid/${trimmed}`
+        : `/track/tx/${trimmed}`;
+      if (pathname !== targetUrl) {
+        router.replace(targetUrl, { scroll: false });
+      }
     }
 
     // If the LZ message is not terminal, start auto-refresh polling

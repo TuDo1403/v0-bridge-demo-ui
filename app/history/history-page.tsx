@@ -144,8 +144,8 @@ function StatusBadge({ job }: { job: BridgeStatusResponse }) {
 
 function JobCard({ job }: { job: BridgeStatusResponse }) {
   const router = useRouter();
-  const srcChain = Object.values(CHAINS).find((c) => c.chainId === job.sourceChainId);
-  const dstChain = Object.values(CHAINS).find((c) => c.chainId === job.dstChainId);
+  const srcChain = CHAINS[Number(job.sourceChainId)];
+  const dstChain = CHAINS[Number(job.dstChainId)];
   const decimals = resolveTokenDecimals(job.token);
   const symbol = resolveTokenSymbol(job.token);
   const failed = isJobFailed(job);
