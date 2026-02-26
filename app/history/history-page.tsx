@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
+/*  Formatting helpers                                                 */
 /* ------------------------------------------------------------------ */
 
 /** Resolve decimals from a token contract address */
