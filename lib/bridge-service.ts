@@ -81,6 +81,31 @@ export async function lookupByTxHash(
   return res.json();
 }
 
+/**
+ * Fetch bridge history for an address.
+ * Calls GET /v1/bridge/history/{address} via our proxy.
+ */
+export async function fetchHistory(
+  address: string,
+  limit = 20,
+  offset = 0
+): Promise<BridgeStatusResponse[]> {
+  const params = new URLSearchParams({
+    address,
+    limit: String(limit),
+    offset: String(offset),
+  });
+
+  const res = await fetch(`${API_BASE}/history?${params.toString()}`);
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error ?? `History fetch failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
 export function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "error" || status === "failed";
 }

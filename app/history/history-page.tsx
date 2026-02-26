@@ -3,13 +3,15 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import useSWR from "swr";
+import { useAccount } from "wagmi";
 import { PageShell } from "@/components/bridge/page-shell";
-import { useBridgeStore } from "@/lib/bridge-store";
-import { STATUS_LABELS, type BridgeSession } from "@/lib/types";
+import { fetchHistory } from "@/lib/bridge-service";
+import type { BridgeStatusResponse } from "@/lib/types";
 import { CHAINS, LZ_SCAN_BASE } from "@/config/chains";
-import { TOKENS } from "@/config/contracts";
 import { TxBadge } from "@/components/bridge/tx-badge";
 import { ChainIcon } from "@/components/bridge/chain-icon";
+import { TokenIcon } from "@/components/bridge/token-icon";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -20,28 +22,32 @@ import {
   Loader2,
   ExternalLink,
   Search,
-  X,
+  RefreshCw,
+  Wallet,
+  Copy,
 } from "lucide-react";
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
 
 type FilterTab = "all" | "active" | "completed" | "failed";
 
-function isSessionFailed(s: BridgeSession): boolean {
-  const cs = s.lzTracking?.composeStatus?.toLowerCase() ?? "";
+function isJobFailed(job: BridgeStatusResponse): boolean {
+  const cs = job.composeStatus?.toLowerCase() ?? "";
   return (
-    s.status === "error" ||
-    s.status === "failed" ||
+    job.status === "failed" ||
     cs.includes("fail") ||
-    cs.includes("revert") ||
-    !!(s.status === "completed" && s.error?.toLowerCase().includes("compose"))
+    cs.includes("revert")
   );
 }
 
-function isSessionActive(s: BridgeSession): boolean {
-  return !isSessionFailed(s) && s.status !== "completed";
+function isJobActive(job: BridgeStatusResponse): boolean {
+  return !isJobFailed(job) && job.status !== "completed";
 }
 
-function formatDate(ts: number): string {
-  const d = new Date(ts);
+function formatDate(iso: string): string {
+  const d = new Date(iso);
   return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -50,8 +56,8 @@ function formatDate(ts: number): string {
   });
 }
 
-function getTimeAgo(ts: number): string {
-  const diff = Date.now() - ts;
+function getTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -61,16 +67,22 @@ function getTimeAgo(ts: number): string {
   return `${days}d ago`;
 }
 
-function statusBadge(session: BridgeSession) {
-  const failed = isSessionFailed(session);
-  const completed = session.status === "completed" && !failed;
-  const active = isSessionActive(session);
+/* ------------------------------------------------------------------ */
+/*  Status badge                                                       */
+/* ------------------------------------------------------------------ */
+
+function StatusBadge({ job }: { job: BridgeStatusResponse }) {
+  const failed = isJobFailed(job);
+  const composeFailed =
+    job.composeStatus?.toLowerCase().includes("fail") ||
+    job.composeStatus?.toLowerCase().includes("revert");
+  const completed = job.status === "completed" && !failed;
 
   if (failed) {
     return (
       <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-destructive/15 text-destructive-foreground">
         <XCircle className="h-3 w-3" />
-        Failed
+        {composeFailed ? "Compose Failed" : "Failed"}
       </span>
     );
   }
@@ -82,33 +94,31 @@ function statusBadge(session: BridgeSession) {
       </span>
     );
   }
-  if (active) {
-    return (
-      <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-primary/15 text-primary">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        {STATUS_LABELS[session.status]}
-      </span>
-    );
-  }
-  return null;
+  return (
+    <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-primary/15 text-primary">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      {job.status.replace(/_/g, " ")}
+    </span>
+  );
 }
 
-function SessionCard({ session }: { session: BridgeSession }) {
-  const router = useRouter();
-  const removeSession = useBridgeStore((s) => s.removeSession);
-  const setActiveSession = useBridgeStore((s) => s.setActiveSession);
-  const sourceChain = CHAINS[session.sourceChainId];
-  const destChain = CHAINS[session.destChainId];
-  const token = TOKENS[session.tokenKey];
-  const failed = isSessionFailed(session);
-  const completed = session.status === "completed" && !failed;
+/* ------------------------------------------------------------------ */
+/*  Job card                                                           */
+/* ------------------------------------------------------------------ */
 
-    const trackGuid = session.lzTracking?.guid;
-    const trackTxHash = session.backendProcessTxHash ?? session.userTransferTxHash;
-    const trackUrl = trackGuid
-      ? `/track/guid/${trackGuid}`
-      : trackTxHash
-        ? `/track/tx/${trackTxHash}`
+function JobCard({ job }: { job: BridgeStatusResponse }) {
+  const router = useRouter();
+  const srcChain = Object.values(CHAINS).find((c) => c.chainId === job.sourceChainId);
+  const dstChain = Object.values(CHAINS).find((c) => c.chainId === job.dstChainId);
+  const failed = isJobFailed(job);
+  const completed = job.status === "completed" && !failed;
+
+  const trackUrl = job.lzMessageId
+    ? `/track/guid/${job.lzMessageId}`
+    : job.backendProcessTxHash
+      ? `/track/tx/${job.backendProcessTxHash}`
+      : job.userTransferTxHash
+        ? `/track/tx/${job.userTransferTxHash}`
         : null;
 
   return (
@@ -126,74 +136,126 @@ function SessionCard({ session }: { session: BridgeSession }) {
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex items-center gap-1.5 text-xs font-mono">
-            <ChainIcon
-              chainKey={sourceChain?.iconKey}
-              className="h-4 w-4"
-            />
-            <span className="text-foreground">{sourceChain?.shortLabel ?? "??"}</span>
+            {srcChain && (
+              <>
+                <ChainIcon chainKey={srcChain.iconKey} className="h-4 w-4" />
+                <span className="text-foreground">{srcChain.shortLabel}</span>
+              </>
+            )}
             <ArrowRight className="h-3 w-3 text-muted-foreground" />
-            <ChainIcon
-              chainKey={destChain?.iconKey}
-              className="h-4 w-4"
-            />
-            <span className="text-foreground">{destChain?.shortLabel ?? "??"}</span>
+            {dstChain && (
+              <>
+                <ChainIcon chainKey={dstChain.iconKey} className="h-4 w-4" />
+                <span className="text-foreground">{dstChain.shortLabel}</span>
+              </>
+            )}
           </div>
-          <span className="text-xs font-mono font-medium text-foreground">
-            {session.amount} {token?.symbol ?? session.tokenKey}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <TokenIcon tokenKey="usdc" className="h-3.5 w-3.5" />
+            <span className="text-xs font-mono font-medium text-foreground">
+              {job.amount} USDC
+            </span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {statusBadge(session)}
-          <button
-            onClick={() => removeSession(session.id)}
-            className="text-muted-foreground/30 hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
-            title="Remove"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <StatusBadge job={job} />
       </div>
 
-      {/* Middle: tx hashes */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        {session.userTransferTxHash && (
-          <TxBadge
-            label="User Tx"
-            hash={session.userTransferTxHash}
-            explorerUrl={sourceChain?.explorerTxUrl(session.userTransferTxHash)}
-          />
-        )}
-        {session.backendProcessTxHash && (
-          <TxBadge
-            label="Backend"
-            hash={session.backendProcessTxHash}
-            explorerUrl={sourceChain?.explorerTxUrl(session.backendProcessTxHash)}
-          />
-        )}
-        {session.destinationTxHash && (
-          <TxBadge
-            label="Dest"
-            hash={session.destinationTxHash}
-            explorerUrl={destChain?.explorerTxUrl(session.destinationTxHash)}
-          />
-        )}
-      </div>
-
-      {/* Error message */}
-      {session.error && (
-        <div className="text-[10px] font-mono text-destructive-foreground bg-destructive/10 rounded px-2 py-1.5 break-all">
-          {session.error}
+      {/* Amount breakdown */}
+      {(job.feeAmount || job.netAmount) && (
+        <div className="flex items-center gap-4 px-2 py-1.5 rounded bg-muted/20 border border-border/30 text-[10px] font-mono">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Sent</span>
+            <span className="text-foreground">{job.amount}</span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Fee</span>
+            <span className="text-chart-4">{job.feeAmount ?? "--"}</span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Net Received</span>
+            <span className="text-success">{job.netAmount ?? "--"}</span>
+          </div>
         </div>
       )}
 
-      {/* Bottom: time + actions */}
+      {/* Transaction hashes */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {job.userTransferTxHash && (
+          <TxBadge
+            label="User Tx"
+            hash={job.userTransferTxHash}
+            explorerUrl={srcChain?.explorerTxUrl(job.userTransferTxHash)}
+          />
+        )}
+        {job.backendProcessTxHash && (
+          <TxBadge
+            label="Backend"
+            hash={job.backendProcessTxHash}
+            explorerUrl={srcChain?.explorerTxUrl(job.backendProcessTxHash)}
+          />
+        )}
+        {job.lzMessageId && (
+          <div className="flex items-center gap-1 text-[10px] font-mono">
+            <span className="text-muted-foreground/60">LZ Msg</span>
+            <span className="text-foreground truncate max-w-[100px]">
+              {job.lzMessageId.slice(0, 8)}...{job.lzMessageId.slice(-6)}
+            </span>
+            <button
+              onClick={() => navigator.clipboard.writeText(job.lzMessageId!)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Copy className="h-2.5 w-2.5" />
+            </button>
+          </div>
+        )}
+        {job.destinationTxHash && (
+          <TxBadge
+            label="Dest"
+            hash={job.destinationTxHash}
+            explorerUrl={dstChain?.explorerTxUrl(job.destinationTxHash)}
+          />
+        )}
+        {job.composeTxHash && (
+          <TxBadge
+            label="Compose"
+            hash={job.composeTxHash}
+            explorerUrl={dstChain?.explorerTxUrl(job.composeTxHash)}
+          />
+        )}
+      </div>
+
+      {/* Compose status */}
+      {job.composeStatus && (
+        <div className="flex items-center gap-2 text-[10px] font-mono">
+          <span className="text-muted-foreground/60">Compose:</span>
+          <span
+            className={cn(
+              "px-1.5 py-0.5 rounded",
+              isJobFailed(job) && "bg-destructive/10 text-destructive-foreground",
+              !isJobFailed(job) && job.composeStatus.toLowerCase().includes("execut") && "bg-success/10 text-success",
+              !isJobFailed(job) && !job.composeStatus.toLowerCase().includes("execut") && "bg-muted/50 text-muted-foreground",
+            )}
+          >
+            {job.composeStatus}
+          </span>
+        </div>
+      )}
+
+      {/* Error message */}
+      {job.error && (
+        <div className="text-[10px] font-mono text-destructive-foreground bg-destructive/10 rounded px-2 py-1.5 break-all">
+          {job.error}
+        </div>
+      )}
+
+      {/* Bottom row: timestamps + actions */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground/50">
-          <span>{formatDate(session.createdAt)}</span>
-          <span>{getTimeAgo(session.createdAt)}</span>
-          <span className="truncate max-w-[120px]" title={session.id}>
-            ID: {session.id.slice(0, 8)}...
+          <span>{formatDate(job.createdAt)}</span>
+          <span>{getTimeAgo(job.createdAt)}</span>
+          <span className="truncate max-w-[100px]" title={job.jobId}>
+            {job.jobId.slice(0, 8)}...
           </span>
         </div>
 
@@ -209,9 +271,9 @@ function SessionCard({ session }: { session: BridgeSession }) {
               Track
             </Button>
           )}
-          {session.lzTracking?.guid && (
+          {job.lzMessageId && (
             <a
-              href={`${LZ_SCAN_BASE}/tx/${session.lzTracking.guid}`}
+              href={`${LZ_SCAN_BASE}/tx/${job.lzMessageId}`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors"
@@ -219,19 +281,6 @@ function SessionCard({ session }: { session: BridgeSession }) {
               LZ Scan
               <ExternalLink className="h-2.5 w-2.5" />
             </a>
-          )}
-          {failed && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-6 px-2 text-[10px] font-mono gap-1 border-destructive/30 hover:bg-destructive/10 text-destructive-foreground"
-              onClick={() => {
-                setActiveSession(session);
-                router.push("/bridge");
-              }}
-            >
-              Retry
-            </Button>
           )}
         </div>
       </div>
@@ -243,30 +292,47 @@ function SessionCard({ session }: { session: BridgeSession }) {
 /*  Main history page                                                  */
 /* ------------------------------------------------------------------ */
 
+const PAGE_SIZE = 20;
+
 export function HistoryPage() {
-  const sessions = useBridgeStore((s) => s.recentSessions);
+  const { address, isConnected } = useAccount();
   const [filter, setFilter] = useState<FilterTab>("all");
+  const [page, setPage] = useState(0);
+
+  const {
+    data: jobs,
+    error: fetchError,
+    isLoading,
+    mutate,
+  } = useSWR(
+    isConnected && address ? ["bridge-history", address, page] : null,
+    () => fetchHistory(address!, PAGE_SIZE, page * PAGE_SIZE),
+    { refreshInterval: 15000, revalidateOnFocus: true }
+  );
 
   const filtered = useMemo(() => {
-    const sorted = [...sessions].reverse();
+    if (!jobs) return [];
     switch (filter) {
       case "active":
-        return sorted.filter((s) => isSessionActive(s));
+        return jobs.filter((j) => isJobActive(j));
       case "completed":
-        return sorted.filter((s) => s.status === "completed" && !isSessionFailed(s));
+        return jobs.filter((j) => j.status === "completed" && !isJobFailed(j));
       case "failed":
-        return sorted.filter((s) => isSessionFailed(s));
+        return jobs.filter((j) => isJobFailed(j));
       default:
-        return sorted;
+        return jobs;
     }
-  }, [sessions, filter]);
+  }, [jobs, filter]);
 
-  const counts = useMemo(() => ({
-    all: sessions.length,
-    active: sessions.filter((s) => isSessionActive(s)).length,
-    completed: sessions.filter((s) => s.status === "completed" && !isSessionFailed(s)).length,
-    failed: sessions.filter((s) => isSessionFailed(s)).length,
-  }), [sessions]);
+  const counts = useMemo(() => {
+    if (!jobs) return { all: 0, active: 0, completed: 0, failed: 0 };
+    return {
+      all: jobs.length,
+      active: jobs.filter((j) => isJobActive(j)).length,
+      completed: jobs.filter((j) => j.status === "completed" && !isJobFailed(j)).length,
+      failed: jobs.filter((j) => isJobFailed(j)).length,
+    };
+  }, [jobs]);
 
   const TABS: { key: FilterTab; label: string }[] = [
     { key: "all", label: "All" },
@@ -275,17 +341,41 @@ export function HistoryPage() {
     { key: "failed", label: "Failed" },
   ];
 
+  /* Not connected state */
+  if (!isConnected) {
+    return (
+      <PageShell>
+        <div className="p-4 sm:p-5 rounded-lg border border-border bg-card">
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
+            <Wallet className="h-8 w-8 text-muted-foreground/30" />
+            <span className="text-xs font-mono text-center">
+              Connect your wallet to view bridge history
+            </span>
+          </div>
+        </div>
+      </PageShell>
+    );
+  }
+
   return (
     <PageShell>
       <div className="p-4 sm:p-5 rounded-lg border border-border bg-card">
+        {/* Header */}
         <div className="flex items-center gap-2 mb-4">
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-            Session History
+            Bridge History
           </span>
           <span className="h-px flex-1 bg-border" />
           <span className="text-[10px] font-mono text-muted-foreground/50">
-            {sessions.length} sessions
+            {address?.slice(0, 6)}...{address?.slice(-4)}
           </span>
+          <button
+            onClick={() => mutate()}
+            className="text-muted-foreground/50 hover:text-foreground transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+          </button>
         </div>
 
         {/* Filter tabs */}
@@ -293,7 +383,7 @@ export function HistoryPage() {
           {TABS.map(({ key, label }) => (
             <button
               key={key}
-              onClick={() => setFilter(key)}
+              onClick={() => { setFilter(key); setPage(0); }}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-mono transition-colors",
                 filter === key
@@ -314,14 +404,40 @@ export function HistoryPage() {
           ))}
         </div>
 
-        {/* Session list */}
-        {filtered.length === 0 ? (
+        {/* Loading */}
+        {isLoading && (
+          <div className="flex flex-col items-center justify-center gap-2 py-12">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span className="text-xs font-mono text-muted-foreground">Loading history...</span>
+          </div>
+        )}
+
+        {/* Error */}
+        {fetchError && !isLoading && (
+          <div className="flex flex-col items-center justify-center gap-2 py-12 text-destructive-foreground">
+            <XCircle className="h-6 w-6 text-destructive-foreground/50" />
+            <span className="text-xs font-mono text-center">
+              {fetchError.message ?? "Failed to load history"}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2 font-mono text-xs"
+              onClick={() => mutate()}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {/* Empty */}
+        {!isLoading && !fetchError && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
             <Clock className="h-6 w-6 text-muted-foreground/30" />
             <span className="text-xs font-mono">
               {filter === "all"
-                ? "No bridge sessions yet"
-                : `No ${filter} sessions`}
+                ? "No bridge transactions found"
+                : `No ${filter} transactions`}
             </span>
             {filter === "all" && (
               <Link href="/bridge">
@@ -331,11 +447,41 @@ export function HistoryPage() {
               </Link>
             )}
           </div>
-        ) : (
+        )}
+
+        {/* Job list */}
+        {!isLoading && !fetchError && filtered.length > 0 && (
           <div className="flex flex-col gap-3">
-            {filtered.map((session) => (
-              <SessionCard key={session.id} session={session} />
+            {filtered.map((job) => (
+              <JobCard key={job.jobId} job={job} />
             ))}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!isLoading && jobs && jobs.length > 0 && (
+          <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
+            <Button
+              variant="outline"
+              size="sm"
+              className="font-mono text-xs"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-[10px] font-mono text-muted-foreground">
+              Page {page + 1}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="font-mono text-xs"
+              disabled={jobs.length < PAGE_SIZE}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
           </div>
         )}
       </div>
