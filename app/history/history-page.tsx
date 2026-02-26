@@ -32,6 +32,41 @@ import {
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+/** Resolve decimals from a token contract address */
+function resolveTokenDecimals(tokenAddr: string): number {
+  const lower = tokenAddr.toLowerCase();
+  for (const t of Object.values(TOKENS)) {
+    for (const addr of Object.values(t.addresses)) {
+      if (addr.toLowerCase() === lower) return t.decimals;
+    }
+  }
+  return 6;
+}
+
+function resolveTokenSymbol(tokenAddr: string): string {
+  const lower = tokenAddr.toLowerCase();
+  for (const t of Object.values(TOKENS)) {
+    for (const addr of Object.values(t.addresses)) {
+      if (addr.toLowerCase() === lower) return t.symbol;
+    }
+  }
+  return "USDC";
+}
+
+/** Format a raw amount string with proper decimals */
+function fmtAmt(raw: string | null | undefined, decimals: number): string {
+  if (!raw) return "--";
+  try {
+    const n = Number(formatUnits(BigInt(raw), decimals));
+    return n.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: decimals,
+    });
+  } catch {
+    return raw;
+  }
+}
+
 type FilterTab = "all" | "active" | "completed" | "failed";
 
 function isJobFailed(job: BridgeStatusResponse): boolean {
