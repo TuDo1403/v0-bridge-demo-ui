@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
@@ -332,10 +332,22 @@ function JobCard({ job }: { job: BridgeStatusResponse }) {
 
 const PAGE_SIZE = 20;
 
-export function HistoryPage() {
-  const { address, isConnected } = useAccount();
+export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
+  const router = useRouter();
+  const { address: walletAddress, isConnected } = useAccount();
+
+  // Use the URL param if provided, otherwise fall back to connected wallet
+  const address = addressParam ?? walletAddress;
+
   const [filter, setFilter] = useState<FilterTab>("all");
   const [page, setPage] = useState(0);
+
+  // When wallet connects on /history (no param), redirect to /history/{address}
+  useEffect(() => {
+    if (walletAddress && !addressParam) {
+      router.replace(`/history/${walletAddress}`, { scroll: false });
+    }
+  }, [walletAddress, addressParam, router]);
 
   const {
     data: jobs,
@@ -343,7 +355,7 @@ export function HistoryPage() {
     isLoading,
     mutate,
   } = useSWR(
-    isConnected && address ? ["bridge-history", address, page] : null,
+    address ? ["bridge-history", address, page] : null,
     () => fetchHistory(address!, PAGE_SIZE, page * PAGE_SIZE),
     { refreshInterval: 15000, revalidateOnFocus: true }
   );
@@ -379,8 +391,8 @@ export function HistoryPage() {
     { key: "failed", label: "Failed" },
   ];
 
-  /* Not connected state */
-  if (!isConnected) {
+  /* No address available -- show connect prompt */
+  if (!address) {
     return (
       <PageShell>
         <div className="p-4 sm:p-5 rounded-lg border border-border bg-card">
