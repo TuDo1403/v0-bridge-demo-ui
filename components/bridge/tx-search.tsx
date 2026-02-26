@@ -12,11 +12,35 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { formatUnits } from "viem";
 import { normalizeLzStatus, type LzTrackingData } from "@/lib/layerzero";
 import { CHAINS, LZ_SCAN_BASE } from "@/config/chains";
+import { TOKENS } from "@/config/contracts";
 import { lookupByTxHash } from "@/lib/bridge-service";
 import type { BridgeStatusResponse } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
+
+/** Resolve decimals from a token contract address */
+function resolveTokenDecimals(tokenAddr: string): number {
+  const lower = tokenAddr.toLowerCase();
+  for (const t of Object.values(TOKENS)) {
+    for (const addr of Object.values(t.addresses)) {
+      if (addr.toLowerCase() === lower) return t.decimals;
+    }
+  }
+  return 6; // default to USDC decimals
+}
+
+/** Format a raw amount string with proper decimals */
+function fmtAmt(raw: string | null | undefined, decimals: number): string {
+  if (!raw) return "--";
+  try {
+    const n = Number(formatUnits(BigInt(raw), decimals));
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: decimals });
+  } catch {
+    return raw;
+  }
+}
 import {
   Search,
   Loader2,
@@ -511,6 +535,10 @@ function BackendJobCard({ job }: { job: BridgeStatusResponse }) {
 
   const srcChain = Object.values(CHAINS).find((c) => c.chainId === job.sourceChainId);
   const dstChain = Object.values(CHAINS).find((c) => c.chainId === job.dstChainId);
+  const decimals = resolveTokenDecimals(job.token);
+  const tokenSymbol = Object.values(TOKENS).find(
+    (t) => Object.values(t.addresses).some((a) => a.toLowerCase() === job.token.toLowerCase())
+  )?.symbol ?? "USDC";
 
   const isComplete = job.status === "completed";
   const isFailed = job.status === "failed";
@@ -597,7 +625,7 @@ function BackendJobCard({ job }: { job: BridgeStatusResponse }) {
             <div className="flex items-center gap-3">
               <TokenIcon tokenKey="usdc" className="h-5 w-5 shrink-0" />
               <div className="flex flex-col gap-0.5 flex-1">
-                <span className="text-xs font-mono font-medium text-foreground">{job.amount} USDC</span>
+                <span className="text-xs font-mono font-medium text-foreground">{fmtAmt(job.amount, decimals)} {tokenSymbol}</span>
                 <span className="text-[9px] font-mono text-muted-foreground">
                   {srcChain?.shortLabel ?? "Source"} to {dstChain?.shortLabel ?? "Dest"}
                 </span>
@@ -607,15 +635,15 @@ function BackendJobCard({ job }: { job: BridgeStatusResponse }) {
               <div className="mt-2 pt-2 border-t border-border/30 grid grid-cols-3 gap-2 text-[10px] font-mono">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Sent</span>
-                  <span className="text-foreground">{job.amount}</span>
+                  <span className="text-foreground">{fmtAmt(job.amount, decimals)}</span>
                 </div>
                 <div className="flex flex-col gap-0.5">
                   <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Fee</span>
-                  <span className="text-chart-4">{job.feeAmount ?? "--"}</span>
+                  <span className="text-chart-4">{fmtAmt(job.feeAmount, decimals)}</span>
                 </div>
                 <div className="flex flex-col gap-0.5">
                   <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Net Received</span>
-                  <span className="text-success">{job.netAmount ?? "--"}</span>
+                  <span className="text-success">{fmtAmt(job.netAmount, decimals)}</span>
                 </div>
               </div>
             )}
@@ -798,19 +826,22 @@ export function TxSearch({
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     setPollingActive(false);
 
-    // Query both our backend and LZ Scan in parallel
+    // Step 1: Query our backend first (matches any of the 4 tx hashes)
     const trimmed = query.trim();
     const isHexHash = /^0x[0-9a-fA-F]{64}$/.test(trimmed);
 
-    const [backendResult, lzResult] = await Promise.all([
-      // Only query backend for hex hashes (tx hashes / GUIDs)
-      isHexHash
-        ? lookupByTxHash(trimmed).catch(() => null)
-        : Promise.resolve(null),
-      doLookup(trimmed),
-    ]);
+    let backendResult: BridgeStatusResponse | null = null;
+    if (isHexHash) {
+      backendResult = await lookupByTxHash(trimmed).catch(() => null);
+      if (backendResult) setBackendJob(backendResult);
+    }
 
-    if (backendResult) setBackendJob(backendResult);
+    // Step 2: Query LZ Scan using the best hash:
+    // - If backend returned data, use backendProcessTxHash (what LZ actually indexes)
+    // - Otherwise fall back to the user's search query
+    const lzHash = backendResult?.backendProcessTxHash ?? trimmed;
+    const lzResult = await doLookup(lzHash);
+
     setLoading(false);
 
     // If neither returned data
@@ -819,11 +850,16 @@ export function TxSearch({
       return;
     }
 
+    // Clear "not found" error if backend returned data but LZ didn't
+    if (backendResult && !lzResult) {
+      setError(null);
+    }
+
     // If the LZ message is not terminal, start auto-refresh polling
     if (lzResult && lzResult.status !== "lz_delivered" && lzResult.status !== "lz_failed") {
       setPollingActive(true);
       pollRef.current = setInterval(async () => {
-        const updated = await doLookup(trimmed, true);
+        const updated = await doLookup(lzHash, true);
         // Also refresh backend data
         if (isHexHash) {
           const updatedJob = await lookupByTxHash(trimmed).catch(() => null);

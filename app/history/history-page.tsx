@@ -8,8 +8,42 @@ import { useAccount } from "wagmi";
 import { PageShell } from "@/components/bridge/page-shell";
 import { fetchHistory } from "@/lib/bridge-service";
 import type { BridgeStatusResponse } from "@/lib/types";
+import { formatUnits } from "viem";
 import { CHAINS, LZ_SCAN_BASE } from "@/config/chains";
+import { TOKENS } from "@/config/contracts";
 import { TxBadge } from "@/components/bridge/tx-badge";
+
+/** Resolve decimals from a token contract address */
+function resolveTokenDecimals(tokenAddr: string): number {
+  const lower = tokenAddr.toLowerCase();
+  for (const t of Object.values(TOKENS)) {
+    for (const addr of Object.values(t.addresses)) {
+      if (addr.toLowerCase() === lower) return t.decimals;
+    }
+  }
+  return 6;
+}
+
+function resolveTokenSymbol(tokenAddr: string): string {
+  const lower = tokenAddr.toLowerCase();
+  for (const t of Object.values(TOKENS)) {
+    for (const addr of Object.values(t.addresses)) {
+      if (addr.toLowerCase() === lower) return t.symbol;
+    }
+  }
+  return "USDC";
+}
+
+/** Format a raw amount string with proper decimals */
+function fmtAmt(raw: string | null | undefined, decimals: number): string {
+  if (!raw) return "--";
+  try {
+    const n = Number(formatUnits(BigInt(raw), decimals));
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: decimals });
+  } catch {
+    return raw;
+  }
+}
 import { ChainIcon } from "@/components/bridge/chain-icon";
 import { TokenIcon } from "@/components/bridge/token-icon";
 import { Button } from "@/components/ui/button";
@@ -110,6 +144,8 @@ function JobCard({ job }: { job: BridgeStatusResponse }) {
   const router = useRouter();
   const srcChain = Object.values(CHAINS).find((c) => c.chainId === job.sourceChainId);
   const dstChain = Object.values(CHAINS).find((c) => c.chainId === job.dstChainId);
+  const decimals = resolveTokenDecimals(job.token);
+  const symbol = resolveTokenSymbol(job.token);
   const failed = isJobFailed(job);
   const completed = job.status === "completed" && !failed;
 
@@ -152,9 +188,9 @@ function JobCard({ job }: { job: BridgeStatusResponse }) {
           </div>
           <div className="flex items-center gap-1.5">
             <TokenIcon tokenKey="usdc" className="h-3.5 w-3.5" />
-            <span className="text-xs font-mono font-medium text-foreground">
-              {job.amount} USDC
-            </span>
+                <span className="text-xs font-mono font-medium text-foreground">
+                  {fmtAmt(job.amount, decimals)} {symbol}
+                </span>
           </div>
         </div>
 
@@ -165,16 +201,16 @@ function JobCard({ job }: { job: BridgeStatusResponse }) {
       {(job.feeAmount || job.netAmount) && (
         <div className="flex items-center gap-4 px-2 py-1.5 rounded bg-muted/20 border border-border/30 text-[10px] font-mono">
           <div className="flex flex-col gap-0.5">
-            <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Sent</span>
-            <span className="text-foreground">{job.amount}</span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Fee</span>
-            <span className="text-chart-4">{job.feeAmount ?? "--"}</span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Net Received</span>
-            <span className="text-success">{job.netAmount ?? "--"}</span>
+                  <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Sent</span>
+                  <span className="text-foreground">{fmtAmt(job.amount, decimals)}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Fee</span>
+                  <span className="text-chart-4">{fmtAmt(job.feeAmount, decimals)}</span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-muted-foreground/60 uppercase tracking-wider text-[8px]">Net Received</span>
+                  <span className="text-success">{fmtAmt(job.netAmount, decimals)}</span>
           </div>
         </div>
       )}
