@@ -581,7 +581,7 @@ export function BridgePanel() {
       {step === "form" && !showTrackingView && (
         <div className="flex flex-col gap-4">
           {/* Source chain */}
-          <div className="p-4 rounded-lg border border-border bg-card">
+          <div className="p-3 sm:p-4 rounded-lg border border-border bg-card">
             <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2 block">
               From
             </label>
@@ -709,7 +709,7 @@ export function BridgePanel() {
           </div>
 
           {/* Destination chain */}
-          <div className="p-4 rounded-lg border border-border bg-card">
+          <div className="p-3 sm:p-4 rounded-lg border border-border bg-card">
             <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2 block">
               To
             </label>
@@ -742,7 +742,7 @@ export function BridgePanel() {
 
           {/* Deposit address preview */}
           {isConnected && (
-            <div className="p-3 rounded-lg border border-border bg-muted/20">
+            <div className="p-2.5 sm:p-3 rounded-lg border border-border bg-muted/20">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
                   Deposit Address

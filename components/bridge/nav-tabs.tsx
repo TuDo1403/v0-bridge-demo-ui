@@ -15,7 +15,7 @@ export function NavTabs() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex items-center gap-1 p-1 rounded-lg bg-muted/30 border border-border/50">
+    <nav className="flex items-center gap-0.5 sm:gap-1 p-0.5 sm:p-1 rounded-lg bg-muted/30 border border-border/50">
       {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
         const isActive = pathname === href || pathname.startsWith(href + "/");
         return (
@@ -23,13 +23,13 @@ export function NavTabs() {
             key={href}
             href={href}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-mono transition-colors",
+              "flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-[11px] sm:text-xs font-mono transition-colors",
               isActive
                 ? "bg-primary/15 text-primary border border-primary/20"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
             )}
           >
-            <Icon className="h-3.5 w-3.5" />
+            <Icon className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
             {label}
           </Link>
         );

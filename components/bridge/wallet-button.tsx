@@ -28,10 +28,11 @@ export function WalletButton() {
     return (
       <Button
         onClick={() => connect({ connector: connectors[0] })}
-        className="bg-primary text-primary-foreground font-mono text-sm"
+        className="bg-primary text-primary-foreground font-mono text-xs sm:text-sm h-8 sm:h-9 px-2.5 sm:px-3"
       >
-        <Wallet className="mr-2 h-4 w-4" />
-        Connect Wallet
+        <Wallet className="mr-1.5 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
+        <span className="hidden sm:inline">Connect Wallet</span>
+        <span className="sm:hidden">Connect</span>
       </Button>
     );
   }
@@ -47,14 +48,8 @@ export function WalletButton() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="font-mono text-sm gap-2">
+        <Button variant="outline" className="font-mono text-xs sm:text-sm gap-1.5 sm:gap-2 px-2.5 sm:px-3 h-8 sm:h-9">
           <span className="h-2 w-2 rounded-full bg-success shrink-0" />
-          {chainMeta && (
-            <span className="flex items-center gap-1 text-muted-foreground text-[10px] hidden sm:inline-flex">
-              <ChainIcon chainKey={chainMeta.iconKey} className="h-3.5 w-3.5" />
-              {chainMeta.shortLabel}
-            </span>
-          )}
           {truncateAddress(address!)}
         </Button>
       </DropdownMenuTrigger>
