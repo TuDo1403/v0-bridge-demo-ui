@@ -521,16 +521,57 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
             </div>
           )}
 
-          {/* Rescue hint for stalled */}
+          {/* Nudge / retry for stalled waiting phase */}
           {phase === "waiting" && (Date.now() - session.createdAt > 120_000) && (
-            <div className="px-3 py-2 rounded bg-warning/10 border border-warning/20 text-[11px] font-mono text-warning flex items-start gap-2">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-medium">Taking longer than expected.</span>{" "}
-                If the backend does not process within a reasonable time, you can
-                call <code className="text-foreground bg-muted/50 px-1 rounded">rescueFunds()</code> on
-                the GlobalDeposit contract to recover your tokens.
+            <div className="flex flex-col gap-2">
+              <div className="px-3 py-2 rounded bg-warning/10 border border-warning/20 text-[11px] font-mono text-warning flex items-start gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-medium">Taking longer than expected.</span>{" "}
+                  You can nudge the backend to retry processing, or call{" "}
+                  <code className="text-foreground bg-muted/50 px-1 rounded">rescueFunds()</code> on
+                  the GlobalDeposit contract to recover your tokens.
+                </div>
               </div>
+              {session.jobId && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={retrying}
+                    className="font-mono text-xs gap-1.5 border-warning/30 hover:bg-warning/10 text-warning"
+                    onClick={async () => {
+                      setRetrying(true);
+                      setRetryError(null);
+                      try {
+                        const composeData = buildComposeData(session, feeBps, dustRate);
+                        const res = await retryBridgeJob(session.jobId!, composeData);
+                        updateSession(session.id, {
+                          status: mapBackendStatus(res.status),
+                          error: undefined,
+                        });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Nudge failed";
+                        setRetryError(msg);
+                      } finally {
+                        setRetrying(false);
+                      }
+                    }}
+                  >
+                    {retrying ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3 w-3" />
+                    )}
+                    {retrying ? "Nudging..." : "Nudge Backend"}
+                  </Button>
+                  {retryError && (
+                    <span className="text-[10px] font-mono text-destructive-foreground">
+                      {retryError}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
