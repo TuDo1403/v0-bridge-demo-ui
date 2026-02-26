@@ -44,8 +44,7 @@ function fmtAmt(raw: string | null | undefined, decimals: number): string {
     return raw;
   }
 }
-import { ChainIcon } from "@/components/bridge/chain-icon";
-import { TokenIcon } from "@/components/bridge/token-icon";
+import { ChainIcon, TokenIcon } from "@/components/bridge/chain-icon";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
