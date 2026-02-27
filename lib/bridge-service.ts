@@ -95,6 +95,24 @@ export async function fetchHistory(
   return res.json();
 }
 
+/**
+ * Get the deposit address for a receiver on a specific source chain.
+ * Calls POST /v1/bridge/address via our proxy.
+ */
+export async function getDepositAddress(
+  sourceChainId: number,
+  receiver: string
+): Promise<{ depositAddress: string }> {
+  const res = await fetch(`${API_BASE}/address`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourceChainId, receiver }),
+  });
+
+  if (!res.ok) await throwApiError(res, "Deposit address lookup failed");
+  return res.json();
+}
+
 export function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "error" || status === "failed";
 }

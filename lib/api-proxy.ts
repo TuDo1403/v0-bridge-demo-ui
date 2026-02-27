@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const BRIDGE_API = "https://bridge-api.tudm.net";
+const BRIDGE_API = process.env.BRIDGE_API_URL ?? "http://127.0.0.1:8080";
 const API_KEY = process.env.BRIDGE_API_KEY ?? "";
 
 /**

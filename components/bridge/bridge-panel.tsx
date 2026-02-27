@@ -28,6 +28,7 @@ import {
   submitBridgeProcess,
   pollBridgeStatus,
   retryBridgeJob,
+  getDepositAddress,
   isTerminalStatus,
 } from "@/lib/bridge-service";
 import { CONTRACT_ERROR_MAP, mapBackendStatus, isComposeFailed, type BridgeStatus, type BridgeSession } from "@/lib/types";
@@ -167,24 +168,52 @@ export function BridgePanel() {
       ? formatUnits(walletBalance, token.decimals)
       : null;
 
-  // --- Compute deposit address from contract ---
-  const {
-    data: computedDepositAddr,
-    isLoading: isComputingDeposit,
-    isError: isComputeError,
-    refetch: retryComputeDeposit,
-  } = useReadContract({
-    address: globalDepositAddr,
-    abi: riseGlobalDepositAbi,
-    functionName: "computeDepositAddress",
-    args: address ? [address] : undefined,
-    chainId: sourceChainId,
-    query: { enabled: !!address && !!globalDepositAddr, retry: 3, retryDelay: 2000 },
-  });
+  // --- Fetch deposit address from API ---
+  const [computedDepositAddr, setComputedDepositAddr] = useState<string | undefined>();
+  const [isComputingDeposit, setIsComputingDeposit] = useState(false);
+  const [isComputeError, setIsComputeError] = useState(false);
+
+  const computeDepositAddress = useCallback(
+    async (addr: string, chainId: number) => {
+      setIsComputingDeposit(true);
+      setIsComputeError(false);
+      try {
+        const result = await getDepositAddress(chainId, addr);
+        setComputedDepositAddr(result.depositAddress);
+      } catch {
+        setIsComputeError(true);
+      } finally {
+        setIsComputingDeposit(false);
+      }
+    },
+    []
+  );
+
+  const retryComputeDeposit = useCallback(() => {
+    if (!address) return;
+    computeDepositAddress(address, sourceChainId);
+  }, [address, sourceChainId, computeDepositAddress]);
+
+  useEffect(() => {
+    if (!address) {
+      return;
+    }
+
+    let isMounted = true;
+
+    (async () => {
+      await computeDepositAddress(address, sourceChainId);
+      if (!isMounted) return;
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [address, sourceChainId, computeDepositAddress]);
 
   useEffect(() => {
     if (computedDepositAddr) {
-      setDepositAddress(computedDepositAddr as string);
+      setDepositAddress(computedDepositAddr);
     }
   }, [computedDepositAddr, setDepositAddress]);
 
@@ -320,6 +349,7 @@ export function BridgePanel() {
     try {
       const res = await submitBridgeProcess({
         sourceChainId: activeSession.sourceChainId,
+        destChainId: activeSession.destChainId,
         userTransferTxHash: activeSession.userTransferTxHash!,
         token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
         receiver: activeSession.userAddress,

@@ -5,15 +5,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    const required = [
-      "sourceChainId",
-      "destChainId",
-      "userTransferTxHash",
-      "token",
-      "receiver",
-      "composer",
-      "composeMsg",
-    ];
+    const required = ["sourceChainId", "receiver"];
     for (const field of required) {
       if (!body[field]) {
         return NextResponse.json(
@@ -23,21 +15,16 @@ export async function POST(request: Request) {
       }
     }
 
-    return proxyBridgeApi("/v1/bridge/process", {
+    return proxyBridgeApi("/v1/bridge/address", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sourceChainId: body.sourceChainId,
-        destChainId: body.destChainId,
-        userTransferTxHash: body.userTransferTxHash,
-        token: body.token,
         receiver: body.receiver,
-        composer: body.composer,
-        composeMsg: body.composeMsg,
       }),
     });
   } catch (err) {
-    console.error("[bridge/process] Error:", err);
+    console.error("[bridge/address] Error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

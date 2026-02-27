@@ -473,6 +473,7 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
                         if (!token) throw new Error("Token address not found");
                         const res = await submitBridgeProcess({
                           sourceChainId: session.sourceChainId,
+                          destChainId: session.destChainId,
                           userTransferTxHash: session.userTransferTxHash,
                           token,
                           receiver: session.userAddress,

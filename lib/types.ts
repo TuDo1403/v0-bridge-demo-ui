@@ -73,6 +73,7 @@ export function mapBackendStatus(backendStatus: string): BridgeStatus {
 /* -- Request to our Next.js proxy (client -> proxy) -- */
 export interface BridgeProcessRequest {
   sourceChainId: number;
+  destChainId: number;
   userTransferTxHash: string;
   token: string;           // token contract address on source chain
   receiver: string;        // user's receiving address on dest chain
