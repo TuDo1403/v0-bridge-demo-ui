@@ -8,8 +8,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'RISE Global Deposit Bridge',
-  description: 'Bridge assets between Sepolia and RISE Testnet via LayerZero',
+  title: 'RISE Bridge',
+  description: 'Bridge assets between Ethereum and RISE Chain via LayerZero',
   icons: {
     icon: [
       {

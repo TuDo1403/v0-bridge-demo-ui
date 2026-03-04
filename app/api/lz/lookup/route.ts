@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const LZ_TESTNET_API = "https://scan-testnet.layerzero-api.com/v1";
-const LZ_MAINNET_API = "https://scan.layerzero-api.com/v1";
+const LZ_TESTNET_API = process.env.LZ_SCAN_API_TESTNET ?? "https://scan-testnet.layerzero-api.com/v1";
+const LZ_MAINNET_API = process.env.LZ_SCAN_API_MAINNET ?? "https://scan.layerzero-api.com/v1";
 
 /**
  * Server-side proxy for LayerZero Scan API.

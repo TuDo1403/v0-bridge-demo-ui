@@ -5,15 +5,37 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    const required = [
-      "sourceChainId",
-      "destChainId",
-      "userTransferTxHash",
-      "token",
-      "receiver",
-      "composer",
-      "composeMsg",
-    ];
+    // Route to the correct backend endpoint based on request shape
+    if (body.permit && typeof body.permit === "object") {
+      // Permit2 flow
+      const required = ["srcEid", "dstEid", "token", "sender", "receiver", "amount"];
+      for (const field of required) {
+        if (!body[field]) {
+          return NextResponse.json(
+            { error: `Missing required field: ${field}` },
+            { status: 400 }
+          );
+        }
+      }
+
+      return proxyBridgeApi("/v1/bridge/process/permit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          srcEid: body.srcEid,
+          dstEid: body.dstEid,
+          token: body.token,
+          sender: body.sender,
+          receiver: body.receiver,
+          amount: body.amount,
+          dappId: body.dappId ?? 0,
+          permit: body.permit,
+        }),
+      });
+    }
+
+    // Vault-funded flow
+    const required = ["srcEid", "dstEid", "userTransferTxHash", "token", "receiver"];
     for (const field of required) {
       if (!body[field]) {
         return NextResponse.json(
@@ -23,17 +45,16 @@ export async function POST(request: Request) {
       }
     }
 
-    return proxyBridgeApi("/v1/bridge/process", {
+    return proxyBridgeApi("/v1/bridge/process/vault-funded", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        sourceChainId: body.sourceChainId,
-        destChainId: body.destChainId,
+        srcEid: body.srcEid,
+        dstEid: body.dstEid,
         userTransferTxHash: body.userTransferTxHash,
         token: body.token,
         receiver: body.receiver,
-        composer: body.composer,
-        composeMsg: body.composeMsg,
+        dappId: body.dappId ?? 0,
       }),
     });
   } catch (err) {

@@ -6,7 +6,7 @@
 /*                                     first discovery)                */
 /* ------------------------------------------------------------------ */
 
-const LZ_API_BASE = "https://scan-testnet.layerzero-api.com/v1";
+const LZ_API_BASE = process.env.LZ_SCAN_API_TESTNET ?? "https://scan-testnet.layerzero-api.com/v1";
 
 /* ---- Normalised types ---- */
 

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   useAccount,
   useReadContract,
   useWriteContract,
   useWaitForTransactionReceipt,
   useSwitchChain,
+  usePublicClient,
 } from "wagmi";
 import {
   parseUnits,
@@ -14,21 +15,28 @@ import {
   type Address,
 } from "viem";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { riseGlobalDepositAbi, erc20Abi, oftConversionRateAbi } from "@/lib/abi";
-import { CHAINS } from "@/config/chains";
+import { riseGlobalDepositAbi, riseGlobalWithdrawAbi, erc20Abi, oftConversionRateAbi } from "@/lib/abi";
+import { CHAINS, chainIdToEid } from "@/config/chains";
+import { useDepositAddress } from "@/hooks/use-deposit-address";
+import { useLzQuote } from "@/hooks/use-lz-quote";
+import { usePermit2 } from "@/hooks/use-permit2";
+import { useComposeMsg } from "@/hooks/use-compose-msg";
+import { DappSelector } from "./dapp-selector";
+import { BridgeModeToggle } from "./bridge-mode-toggle";
 import {
   TOKENS,
   SUPPORTED_TOKEN_KEYS,
   getTokenAddress,
   getGlobalDepositAddress,
-  buildComposeData,
+  getGlobalWithdrawAddress,
+  getBridgeDirection,
 } from "@/config/contracts";
 import { BRIDGE_ROUTES } from "@/config/chains";
 import {
-  submitBridgeProcess,
+  submitVaultFunded,
+  submitPermit,
   pollBridgeStatus,
-  retryBridgeJob,
-  getDepositAddress,
+  pollLzScan,
   isTerminalStatus,
 } from "@/lib/bridge-service";
 import { CONTRACT_ERROR_MAP, mapBackendStatus, isComposeFailed, type BridgeStatus, type BridgeSession } from "@/lib/types";
@@ -46,8 +54,11 @@ import { ChainIcon, TokenIcon } from "./chain-icon";
 import { StatusRail } from "./status-rail";
 import { TrackingCard } from "./tracking-card";
 import { TxBadge } from "./tx-badge";
+import { FeeSummary } from "./fee-summary";
+import { RecoveryPanel } from "./recovery-panel";
 import {
   ArrowDown,
+  ArrowUpDown,
   AlertTriangle,
   RotateCcw,
   Loader2,
@@ -60,6 +71,7 @@ import { cn } from "@/lib/utils";
 export function BridgePanel() {
   const { address, isConnected, chainId: walletChainId } = useAccount();
   const { switchChain } = useSwitchChain();
+  const publicClient = usePublicClient();
 
   const {
     sourceChainId,
@@ -67,12 +79,22 @@ export function BridgePanel() {
     tokenKey,
     amount,
     depositAddress,
+    direction,
+    dappId,
+    recipientAddress,
+    bridgeMode,
+    transferMode,
     activeSession,
     setSourceChainId,
     setDestChainId,
     setTokenKey,
     setAmount,
     setDepositAddress,
+    setDappId,
+    setRecipientAddress,
+    setBridgeMode,
+    setTransferMode,
+    swapDirection,
     createSession,
     updateSession,
     setActiveSession,
@@ -80,12 +102,51 @@ export function BridgePanel() {
     loadRecentSessions,
   } = useBridgeStore();
 
-  const [step, setStep] = useState<
-    "form" | "transfer" | "polling" | "complete"
-  >("form");
+  // Derive step from session state — single source of truth
+  const step = useMemo((): "form" | "transfer" | "polling" | "complete" => {
+    if (!activeSession) return "form";
+    const s = activeSession.status;
+
+    // Terminal: completed
+    if (s === "completed") return "complete";
+
+    // Has tracking context (jobId, selfBridgeTxHash, backendProcessTxHash) = show tracking
+    // This includes failed/error sessions that had backend interaction
+    if (activeSession.jobId || activeSession.selfBridgeTxHash || activeSession.backendProcessTxHash) {
+      return "polling";
+    }
+
+    // Transfer in progress (pre-bridge) — only for vault-funded flows.
+    // Permit2 sessions skip the transfer step entirely (sign → backend → polling).
+    if (activeSession.transferMode !== "permit2" &&
+        (s === "awaiting_transfer" || s === "transfer_submitted" ||
+        s === "transfer_mined" || s === "deposit_verified")) {
+      return "transfer";
+    }
+
+    // Has user transfer tx hash but no bridge tracking context = show tracking
+    // (e.g. operator vault-funded session waiting for backend submission)
+    if (activeSession.userTransferTxHash && activeSession.userTransferTxHash !== "permit2" &&
+        s !== "idle") {
+      return "polling";
+    }
+
+    // Error/failed for a real session (has deposit address) = show tracking card
+    if ((s === "error" || s === "failed") && activeSession.depositAddress) {
+      return "polling";
+    }
+
+    return "form";
+  }, [activeSession]);
+
   const [error, setError] = useState<string | null>(null);
   const [depositCopied, setDepositCopied] = useState(false);
+  const [showRecipient, setShowRecipient] = useState(false);
+  const [manualTxHash, setManualTxHash] = useState("");
+  const [isSubmittingManual, setIsSubmittingManual] = useState(false);
+  const [isPermit2Submitting, setIsPermit2Submitting] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lzPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load recent sessions on mount
   useEffect(() => {
@@ -93,62 +154,65 @@ export function BridgePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Restore step + error whenever the active session changes (including on mount / click)
+  // Resume polling + sync error when session changes (restore from localStorage or click)
   const sessionSelectedAt = useBridgeStore((s) => s.sessionSelectedAt);
   useEffect(() => {
+    // Clear any lingering polling from a previous session when session changes
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    if (lzPollingRef.current) { clearInterval(lzPollingRef.current); lzPollingRef.current = null; }
+
     if (!activeSession) return;
+
+    // Sync error from session
+    if (activeSession.error) setError(activeSession.error);
 
     const s = activeSession.status;
 
-    // Session has a jobId -- it interacted with the backend. Always show tracking.
-    if (activeSession.jobId) {
-      if (activeSession.error) {
-        setError(activeSession.error);
-      }
-      // If it's still in-progress, resume polling
-      if (!isTerminalStatus(s) && s !== "idle" && s !== "error" && s !== "failed") {
-        setStep("polling");
-        startPolling(activeSession.jobId, activeSession.id);
-      } else {
-        // failed / error / idle-with-jobId / completed -- show tracking (no polling)
-        setStep("polling");
-      }
+    // Detect orphaned sessions: status implies processing but no tracking data.
+    // This happens when the wallet rejected or the page was closed before tx confirmed.
+    const hasTrackingContext = !!(
+      activeSession.jobId || activeSession.selfBridgeTxHash ||
+      activeSession.backendProcessTxHash ||
+      (activeSession.userTransferTxHash && activeSession.userTransferTxHash !== "permit2")
+    );
+    const isProcessingStatus = [
+      "bridge_submitted", "bridge_mined", "source_verified",
+      "lz_indexing", "lz_pending", "destination_confirmed", "backend_submitted",
+    ].includes(s);
+    if (isProcessingStatus && !hasTrackingContext) {
+      updateSession(activeSession.id, {
+        status: "error",
+        error: "Bridge transaction was not confirmed.",
+      });
+      setError("Bridge transaction was not confirmed.");
       return;
     }
 
-    // No jobId -- pure client-side states
-    // Failed / error without jobId: show form with error
-    if (s === "error" || s === "failed") {
-      setError(activeSession.error ?? "Bridge transaction failed.");
-      setStep("form");
-      return;
+    // Operator mode: resume backend polling (unless backend already completed)
+    if (activeSession.jobId && !isTerminalStatus(s) &&
+        s !== "idle" && s !== "error" && s !== "failed") {
+      startPolling(activeSession.jobId, activeSession.id);
     }
 
-    // Transfer in progress (no jobId yet)
-    if (
-      s === "awaiting_transfer" ||
-      s === "transfer_submitted" ||
-      s === "transfer_mined" ||
-      s === "deposit_verified"
-    ) {
-      setStep("transfer");
-      return;
+    // Resume LZ polling for any session with a bridge tx hash that isn't terminal.
+    // Covers both self-bridge (selfBridgeTxHash) and operator-mode (backendProcessTxHash)
+    // where backend already confirmed but LZ delivery is still pending.
+    const lzTxHash = activeSession.selfBridgeTxHash ?? activeSession.backendProcessTxHash;
+    if (lzTxHash && !isTerminalStatus(s) && s !== "completed") {
+      startLzPolling(lzTxHash, activeSession.id, activeSession.dappId ?? 0);
     }
 
-    // Default: form
-    setError(null);
-    setStep("form");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession?.id, activeSession?.status, sessionSelectedAt]);
-
-  // Cleanup polling on unmount
-  useEffect(() => {
     return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+      if (lzPollingRef.current) { clearInterval(lzPollingRef.current); lzPollingRef.current = null; }
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession?.id, sessionSelectedAt]);
 
+  const isDeposit = direction === "deposit";
   const globalDepositAddr = getGlobalDepositAddress(sourceChainId);
+  const globalWithdrawAddr = getGlobalWithdrawAddress(sourceChainId);
+  const routerAddr = isDeposit ? globalDepositAddr : globalWithdrawAddr;
   const tokenAddress = getTokenAddress(tokenKey, sourceChainId);
   const token = TOKENS[tokenKey];
 
@@ -159,7 +223,7 @@ export function BridgePanel() {
     functionName: "balanceOf",
     args: address ? [address] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !!address && !!tokenAddress, retry: 3, retryDelay: 2000 },
+    query: { enabled: !!address && !!tokenAddress, refetchInterval: 8_000, retry: 3, retryDelay: 2000 },
   });
 
   // walletBalance can be 0n which is falsy, so check explicitly for undefined/null
@@ -168,48 +232,22 @@ export function BridgePanel() {
       ? formatUnits(walletBalance, token.decimals)
       : null;
 
-  // --- Fetch deposit address from API ---
-  const [computedDepositAddr, setComputedDepositAddr] = useState<string | undefined>();
-  const [isComputingDeposit, setIsComputingDeposit] = useState(false);
-  const [isComputeError, setIsComputeError] = useState(false);
+  // --- Compute deposit address via backend API ---
+  const destLzEid = CHAINS[destChainId]?.lzEid;
 
-  const computeDepositAddress = useCallback(
-    async (addr: string, chainId: number) => {
-      setIsComputingDeposit(true);
-      setIsComputeError(false);
-      try {
-        const result = await getDepositAddress(chainId, addr);
-        setComputedDepositAddr(result.depositAddress);
-      } catch {
-        setIsComputeError(true);
-      } finally {
-        setIsComputingDeposit(false);
-      }
-    },
-    []
-  );
-
-  const retryComputeDeposit = useCallback(() => {
-    if (!address) return;
-    computeDepositAddress(address, sourceChainId);
-  }, [address, sourceChainId, computeDepositAddress]);
-
-  useEffect(() => {
-    if (!address) {
-      return;
-    }
-
-    let isMounted = true;
-
-    (async () => {
-      await computeDepositAddress(address, sourceChainId);
-      if (!isMounted) return;
-    })();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [address, sourceChainId, computeDepositAddress]);
+  const {
+    depositAddress: computedDepositAddr,
+    isLoading: isComputingDeposit,
+    isError: isComputeError,
+    refetch: retryComputeDeposit,
+  } = useDepositAddress({
+    sourceChainId,
+    destChainId,
+    dappId,
+    address,
+    recipientAddress: recipientAddress || undefined,
+    direction,
+  });
 
   useEffect(() => {
     if (computedDepositAddr) {
@@ -217,26 +255,169 @@ export function BridgePanel() {
     }
   }, [computedDepositAddr, setDepositAddress]);
 
-  // --- Read fee config from GlobalDeposit contract ---
+  // Use session's mode when a session is active; fall back to store (form) mode
+  const effectiveBridgeMode = activeSession?.bridgeMode ?? bridgeMode;
+  const effectiveTransferMode = activeSession?.transferMode ?? transferMode;
+  const isSelfBridge = effectiveBridgeMode === "self";
+  const isPermit2 = effectiveTransferMode === "permit2";
+
+  // Session has funded vault but not yet bridged — needs LZ quote regardless of store bridgeMode
+  // Only for self-bridge mode: operator mode submits to backend, not self-bridge
+  const needsSelfBridgeQuote = !!(
+    activeSession &&
+    activeSession.bridgeMode === "self" &&
+    activeSession.userTransferTxHash &&
+    !activeSession.selfBridgeTxHash &&
+    !activeSession.jobId &&
+    !activeSession.backendProcessTxHash &&
+    (activeSession.status === "transfer_mined" || activeSession.status === "deposit_verified")
+  );
+
+  // Memoize parsed amount for Permit2 allowance check
+  const permit2Amount = useMemo(() => {
+    if (!amount || !token) return 0n;
+    try { return parseUnits(amount, token.decimals); } catch { return 0n; }
+  }, [amount, token]);
+
+  // --- Permit2 hook (both operator and self-bridge) ---
+  const permit2 = usePermit2({
+    sourceChainId,
+    destChainId,
+    tokenKey,
+    direction,
+    amount: permit2Amount,
+    enabled: isPermit2,
+  });
+
+  // --- Self-bridge writeContract (deposit/withdraw) ---
+  const {
+    writeContract: writeSelfBridge,
+    data: selfBridgeHash,
+    isPending: isSelfBridgePending,
+    error: selfBridgeError,
+    reset: resetSelfBridge,
+  } = useWriteContract();
+
+  const { isLoading: isWaitingSelfBridge, isSuccess: isSelfBridgeMined } =
+    useWaitForTransactionReceipt({
+      hash: selfBridgeHash,
+      chainId: sourceChainId,
+    });
+
+  // Handle self-bridge error
+  useEffect(() => {
+    if (selfBridgeError) {
+      const msg = selfBridgeError.message ?? "Self-bridge failed";
+      for (const [key, friendly] of Object.entries(CONTRACT_ERROR_MAP)) {
+        if (msg.includes(key)) {
+          setError(friendly);
+          return;
+        }
+      }
+      setError(msg.length > 200 ? msg.slice(0, 200) + "..." : msg);
+    }
+  }, [selfBridgeError]);
+
+  // When self-bridge tx hash appears (user confirmed in wallet), create/update session
+  useEffect(() => {
+    if (!selfBridgeHash || !address) return;
+    if (activeSession?.selfBridgeTxHash === selfBridgeHash) return;
+
+    if (activeSession) {
+      // Vault-funded self-bridge: session exists from transfer step, add bridge hash
+      updateSession(activeSession.id, {
+        selfBridgeTxHash: selfBridgeHash,
+        status: "bridge_submitted",
+      });
+    } else if (depositAddress) {
+      // Permit2 self-bridge: no session yet, create one now
+      const session = createSession({
+        userAddress: address,
+        recipientAddress: recipientAddress || address,
+        depositAddress,
+      });
+      updateSession(session.id, {
+        selfBridgeTxHash: selfBridgeHash,
+        status: "bridge_submitted",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selfBridgeHash]);
+
+  // When self-bridge tx is mined, start LZ polling
+  useEffect(() => {
+    if (isSelfBridgeMined && selfBridgeHash && activeSession?.selfBridgeTxHash) {
+      startLzPolling(selfBridgeHash, activeSession.id, activeSession.dappId ?? 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSelfBridgeMined]);
+
+  // --- Read fee config from contract ---
   const { data: feeConfig } = useReadContract({
-    address: globalDepositAddr,
-    abi: riseGlobalDepositAbi,
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
     functionName: "getFeeConfig",
     chainId: sourceChainId,
-    query: { enabled: !!globalDepositAddr, retry: 3, retryDelay: 2000 },
+    query: { enabled: !!routerAddr, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
   });
 
   // feeConfig returns [feeBps: uint16, feeCollector: address]
   const feeBps = feeConfig ? BigInt((feeConfig as [number, string])[0]) : 50n; // default 0.5%
 
+  // --- Read per-token fee config (mode + flatFee) ---
+  const { data: tokenFeeConfig } = useReadContract({
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
+    functionName: "getTokenFeeConfig",
+    args: tokenAddress ? [tokenAddress] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !!routerAddr && !!tokenAddress, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
+  });
+  const feeMode = tokenFeeConfig ? Number((tokenFeeConfig as [number, bigint])[0]) : 0;
+  const flatFee = tokenFeeConfig ? BigInt((tokenFeeConfig as [number, bigint])[1]) : 0n;
+
+  // --- Fee allowlist check (both deposit and withdrawal) ---
+  const { data: isFeeExempt } = useReadContract({
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
+    functionName: "isFeeAllowlisted",
+    args: address ? [address] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !!routerAddr && !!address, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
+  });
+
+  // --- Blocklist check: sender ---
+  const { data: isSenderBlocked } = useReadContract({
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
+    functionName: "isBlocked",
+    args: address ? [address] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !!routerAddr && !!address, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
+  });
+
+  // --- Blocklist check: recipient (if different from sender) ---
+  const effectiveRecipient = recipientAddress || address;
+  const recipientDiffersFromSender = !!recipientAddress && recipientAddress.toLowerCase() !== address?.toLowerCase();
+  const { data: isRecipientBlocked } = useReadContract({
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
+    functionName: "isBlocked",
+    args: effectiveRecipient ? [effectiveRecipient as Address] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !!routerAddr && !!effectiveRecipient && recipientDiffersFromSender, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
+  });
+
+  const isBlocked = !!isSenderBlocked || !!isRecipientBlocked;
+
   // --- Read tokenConfig to get OFT address, then query decimalConversionRate ---
   const { data: tokenConfig } = useReadContract({
-    address: globalDepositAddr,
+    address: isDeposit ? globalDepositAddr : undefined,
     abi: riseGlobalDepositAbi,
     functionName: "getTokenConfig",
     args: tokenAddress ? [tokenAddress] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !!globalDepositAddr && !!tokenAddress, retry: 3, retryDelay: 2000 },
+    query: { enabled: isDeposit && !!globalDepositAddr && !!tokenAddress, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
   });
 
   // tokenConfig returns { oft: address, enabled: bool, lzReceiveGas: uint128 }
@@ -249,12 +430,85 @@ export function BridgePanel() {
     abi: oftConversionRateAbi,
     functionName: "decimalConversionRate",
     chainId: sourceChainId,
-    query: { enabled: !!oftAddress, retry: 3, retryDelay: 2000 },
+    query: { enabled: !!oftAddress, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
   });
 
   // decimalConversionRate: for 6-decimal USDC with 6 shared decimals, rate = 1 (no dust)
-  // for tokens with localDecimals > sharedDecimals, rate = 10^(localDecimals - sharedDecimals)
   const dustRate = rawConversionRate ? BigInt(rawConversionRate as bigint) : 1n;
+
+  // --- Compose msg from on-chain buildComposeMsg ---
+  const {
+    composeMsg: authorativeComposeMsg,
+    isLoading: isComposeLoading,
+  } = useComposeMsg({
+    sourceChainId,
+    destChainId,
+    tokenKey,
+    amount,
+    dappId,
+    address,
+    recipientAddress: recipientAddress || undefined,
+    direction,
+    feeBps,
+    dustRate,
+    feeMode,
+    flatFee,
+  });
+
+  // --- LZ fee quote (self-bridge mode, uses authoritative compose msg) ---
+  const {
+    nativeFee: lzNativeFee,
+    nativeFeeFormatted: lzFeeFormatted,
+    protocolFee: onChainProtocolFee,
+    isLoading: isLzQuoteLoading,
+    isError: isLzQuoteError,
+    debug: lzQuoteDebug,
+  } = useLzQuote({
+    sourceChainId,
+    destChainId,
+    tokenKey,
+    amount,
+    dappId,
+    address,
+    recipientAddress: recipientAddress || undefined,
+    direction,
+    composeMsg: authorativeComposeMsg,
+    // Always run quote to get on-chain protocolFee for display; self-bridge also needs lzNativeFee
+    enabled: !!address && !!amount && parseFloat(amount) > 0
+      // Wait for compose msg before quoting — contract reverts on empty compose for dappId > 0
+      && (dappId === 0 || !isDeposit || (authorativeComposeMsg !== "0x" && !isComposeLoading)),
+  });
+
+  // --- Rate limit bucket (withdrawals only) ---
+  const { data: rateLimitBucket } = useReadContract({
+    address: globalWithdrawAddr,
+    abi: riseGlobalWithdrawAbi,
+    functionName: "getRateLimitBucket",
+    args: tokenAddress && destLzEid ? [tokenAddress, destLzEid] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !isDeposit && !!globalWithdrawAddr && !!tokenAddress && !!destLzEid, refetchInterval: 10_000, retry: 3, retryDelay: 2000 },
+  });
+
+  const rateLimitInfo = rateLimitBucket
+    ? {
+        available: BigInt((rateLimitBucket as { available: bigint }).available),
+        capacity: BigInt((rateLimitBucket as { capacity: bigint }).capacity),
+      }
+    : null;
+
+  const rateLimitLabel = rateLimitInfo && token
+    ? `${Number(formatUnits(rateLimitInfo.available, token.decimals)).toLocaleString(undefined, { maximumFractionDigits: 0 })}/${Number(formatUnits(rateLimitInfo.capacity, token.decimals)).toLocaleString(undefined, { maximumFractionDigits: 0 })} ${token.symbol}`
+    : undefined;
+
+  // --- Lane pause check (withdrawals only) ---
+  const { data: isLanePaused } = useReadContract({
+    address: globalWithdrawAddr,
+    abi: riseGlobalWithdrawAbi,
+    functionName: "isLanePaused",
+    args: destLzEid ? [destLzEid] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !isDeposit && !!globalWithdrawAddr && !!destLzEid, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
+  });
 
   // --- Check deposit address balance ---
   const { data: depositBalance, refetch: refetchBalance } = useReadContract({
@@ -263,7 +517,7 @@ export function BridgePanel() {
     functionName: "balanceOf",
     args: depositAddress ? [depositAddress as Address] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !!depositAddress && !!tokenAddress && step === "transfer", retry: 3, retryDelay: 2000 },
+    query: { enabled: !!depositAddress && !!tokenAddress && step === "transfer", refetchInterval: 8_000, retry: 3, retryDelay: 2000 },
   });
 
   // --- Token transfer ---
@@ -272,13 +526,21 @@ export function BridgePanel() {
     data: transferHash,
     isPending: isTransferPending,
     error: transferError,
+    reset: resetTransfer,
   } = useWriteContract();
 
-  const { isLoading: isWaitingForTx, isSuccess: isTxMined } =
+  const { isLoading: isWaitingForTx, isSuccess: isTxMinedRaw } =
     useWaitForTransactionReceipt({
       hash: transferHash,
       chainId: sourceChainId,
     });
+
+  // Transfer is "done" either from the live wagmi receipt OR from persisted session status
+  // (wagmi state is lost on page reload, but session status persists in localStorage)
+  const transferDone = isTxMinedRaw || (
+    !!activeSession?.userTransferTxHash &&
+    (activeSession.status === "transfer_mined" || activeSession.status === "deposit_verified")
+  );
 
   // Handle transfer error
   useEffect(() => {
@@ -314,6 +576,7 @@ export function BridgePanel() {
     // Otherwise create the session now (first time a tx hash appears)
     const session = createSession({
       userAddress: address,
+      recipientAddress: recipientAddress || address,
       depositAddress,
     });
     updateSession(session.id, {
@@ -325,12 +588,12 @@ export function BridgePanel() {
 
   // When tx mined, verify deposit and call backend
   useEffect(() => {
-    if (isTxMined && activeSession) {
+    if (isTxMinedRaw && activeSession) {
       updateSession(activeSession.id, { status: "transfer_mined" });
       handlePostMine();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTxMined]);
+  }, [isTxMinedRaw]);
 
   const handlePostMine = useCallback(async () => {
     if (!activeSession) return;
@@ -342,30 +605,33 @@ export function BridgePanel() {
       updateSession(activeSession.id, { status: "deposit_verified" });
     }
 
-    // Build compose data using the shared helper
-    const { composer, composeMsg } = buildComposeData(activeSession, feeBps, dustRate);
+    // Self-bridge mode: user will call deposit()/withdraw() themselves — don't submit to backend.
+    // Read fresh session from store as belt-and-suspenders against stale closures
+    // (the isTxMinedRaw effect that calls handlePostMine omits it from deps).
+    const freshSession = useBridgeStore.getState().activeSession;
+    if (activeSession.bridgeMode === "self" || freshSession?.bridgeMode === "self") {
+      return;
+    }
+
+    // Use session data, not store data — session dappId is stable
+    const sessionDappId = activeSession.dappId ?? 0;
 
     // Submit to real bridge API
     try {
-      const res = await submitBridgeProcess({
-        sourceChainId: activeSession.sourceChainId,
-        destChainId: activeSession.destChainId,
+      const res = await submitVaultFunded({
+        srcEid: chainIdToEid(activeSession.sourceChainId),
+        dstEid: chainIdToEid(activeSession.destChainId),
         userTransferTxHash: activeSession.userTransferTxHash!,
         token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
-        receiver: activeSession.userAddress,
-        composer,
-        composeMsg,
+        receiver: activeSession.recipientAddress || activeSession.userAddress,
+        dappId: sessionDappId,
       });
 
       updateSession(activeSession.id, {
         status: mapBackendStatus(res.status),
         jobId: res.jobId,
-        backendProcessTxHash: res.backendProcessTxHash ?? undefined,
-        composer,
-        composeMsg,
       });
 
-      setStep("polling");
       startPolling(res.jobId, activeSession.id);
     } catch (err) {
       const errMsg =
@@ -374,7 +640,7 @@ export function BridgePanel() {
       setError(errMsg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession, feeBps, dustRate]);
+  }, [activeSession, isDeposit, authorativeComposeMsg]);
 
   const startPolling = useCallback(
     (jobId: string, sessionId: string) => {
@@ -385,49 +651,30 @@ export function BridgePanel() {
           const res = await pollBridgeStatus(jobId);
           const mappedStatus = mapBackendStatus(res.status);
 
-          // Normalize compose status from backend to match LZ Scan conventions
-          // Backend may return: "executed", "failed", "reverted", null, etc.
-          const rawCompose = res.composeStatus?.toLowerCase() ?? "";
-          const normalizedComposeStatus = rawCompose.includes("fail") || rawCompose.includes("revert")
-            ? "FAILED"
-            : rawCompose === "executed" || rawCompose.includes("succeed") || rawCompose.includes("success")
-              ? "SUCCEEDED"
-              : rawCompose === "not_executed"
-                ? "NOT_EXECUTED"
-                : res.composeStatus ?? undefined;
+          // Extract tx hashes from transactions array
+          const userFundTx = res.transactions?.find(t => t.txType === "user_fund");
+          const operatorBridgeTx = res.transactions?.find(t => t.txType === "operator_bridge");
+          const bridgeTxHash = operatorBridgeTx?.txHash;
 
           const sessionUpdates: Partial<BridgeSession> = {
             status: mappedStatus,
-            backendProcessTxHash: res.backendProcessTxHash ?? undefined,
-            lzMessageId: res.lzMessageId ?? undefined,
-            destinationTxHash: res.destinationTxHash ?? undefined,
+            backendProcessTxHash: bridgeTxHash,
             error: res.error ?? undefined,
-            lzTracking: {
-              guid: res.lzMessageId ?? undefined,
-              lzStatus: res.status,
-              srcTxHash: res.userTransferTxHash,
-              dstTxHash: res.destinationTxHash ?? undefined,
-              composeStatus: normalizedComposeStatus,
-              composeTxHash: res.composeTxHash ?? undefined,
-              sender: res.sender ?? undefined,
-              receiver: res.receiver,
-            },
           };
 
           updateSession(sessionId, sessionUpdates);
+
+          // Once we have a bridge tx hash, start LZ polling for cross-chain status
+          if (bridgeTxHash && !lzPollingRef.current) {
+            const sessionDappId = useBridgeStore.getState().activeSession?.dappId ?? 0;
+            startLzPolling(bridgeTxHash, sessionId, sessionDappId);
+          }
 
           if (isTerminalStatus(res.status)) {
             if (pollingRef.current) clearInterval(pollingRef.current);
             pollingRef.current = null;
 
-            // Compose can fail even when the backend reports "completed"
-            const composeFailed = normalizedComposeStatus === "FAILED";
-
-            if (composeFailed) {
-              setError("lzCompose failed on destination chain. You can retry the compose execution.");
-            } else if (res.status === "completed") {
-              setStep("complete");
-            } else if (res.status === "failed") {
+            if (res.status === "failed") {
               setError(res.error ?? "Bridge job failed");
             }
           }
@@ -439,30 +686,280 @@ export function BridgePanel() {
     [updateSession]
   );
 
+  /** Poll LZ Scan directly for self-bridge sessions (no backend involvement) */
+  const startLzPolling = useCallback(
+    (txHash: string, sessionId: string, sessionDappId: number) => {
+      if (lzPollingRef.current) clearInterval(lzPollingRef.current);
+
+      // Poll every 6s (LZ indexing can take 30-120s after tx mines)
+      lzPollingRef.current = setInterval(async () => {
+        try {
+          const snapshot = await pollLzScan(txHash);
+          if (!snapshot) return; // Not indexed yet, keep polling
+
+          const lzStatus = snapshot.lzStatus ?? "";
+          let mappedStatus: BridgeStatus = "lz_pending";
+
+          if (lzStatus === "lz_delivered") {
+            // Direct bridge (dappId=0): no compose step — delivery = complete
+            const needsCompose = sessionDappId > 0;
+
+            if (!needsCompose) {
+              mappedStatus = "completed";
+            } else {
+              const cs = snapshot.composeStatus?.toUpperCase() ?? "";
+              if (cs === "SUCCEEDED" || cs === "EXECUTED") {
+                mappedStatus = "completed";
+              } else if (cs === "FAILED") {
+                mappedStatus = "failed";
+              } else {
+                mappedStatus = "destination_confirmed";
+              }
+            }
+          } else if (lzStatus === "lz_inflight") {
+            mappedStatus = "lz_pending";
+          } else if (lzStatus === "lz_failed" || lzStatus === "lz_blocked") {
+            mappedStatus = "failed";
+          } else if (lzStatus === "lz_pending") {
+            mappedStatus = "lz_indexing";
+          }
+
+          // Don't let LZ polling downgrade an already-completed session.
+          // Backend polling may have set "completed" before LZ Scan indexes compose status.
+          // Keep polling to enrich lzTracking data (guid, dstTxHash, compose) — just don't touch status.
+          const currentStatus = useBridgeStore.getState().activeSession?.status;
+          const isAlreadyComplete = currentStatus === "completed";
+
+          updateSession(sessionId, {
+            ...(isAlreadyComplete ? {} : { status: mappedStatus }),
+            lzTracking: snapshot,
+            lzMessageId: snapshot.guid,
+            destinationTxHash: snapshot.dstTxHash,
+          });
+
+          // LZ-terminal: delivered (+ compose resolved for dapp bridges), or failed
+          const isLzTerminal =
+            mappedStatus === "completed" ||
+            mappedStatus === "failed" ||
+            // For already-completed sessions: stop once LZ itself is delivered and compose is resolved
+            (isAlreadyComplete && lzStatus === "lz_delivered" && (
+              sessionDappId === 0 ||
+              ["SUCCEEDED", "EXECUTED", "FAILED"].includes(snapshot.composeStatus?.toUpperCase() ?? "")
+            ));
+
+          if (isLzTerminal) {
+            if (lzPollingRef.current) clearInterval(lzPollingRef.current);
+            lzPollingRef.current = null;
+
+            if (mappedStatus === "failed" && !isAlreadyComplete) {
+              const cs = snapshot.composeStatus?.toUpperCase() ?? "";
+              if (sessionDappId > 0 && cs === "FAILED") {
+                setError("lzCompose failed on destination chain.");
+              } else {
+                setError("LZ message delivery failed.");
+              }
+            }
+          }
+        } catch {
+          // Polling error, will retry on next tick
+        }
+      }, 6000);
+    },
+    [updateSession]
+  );
+
   // --- Handlers ---
+
+  /** Execute the self-bridge deposit()/withdraw() contract call.
+   *  Session creation/update happens in the selfBridgeHash useEffect (when wallet confirms). */
+  const handleSelfBridge = useCallback(async (permitData?: {
+    permitType: number;
+    deadline: bigint;
+    nonce: bigint;
+    signature: `0x${string}`;
+  }) => {
+    if (!address || !tokenAddress || !amount || !token || !lzNativeFee) return;
+    setError(null);
+
+    const parsedAmt = parseUnits(amount, token.decimals);
+    const dstAddr = (recipientAddress || address) as Address;
+
+    // Use authoritative compose msg (on-chain verified when available)
+    const composeMsgHex = authorativeComposeMsg as `0x${string}`;
+
+    const permit = permitData ?? {
+      permitType: 0, // VaultFunded
+      deadline: 0n,
+      nonce: 0n,
+      signature: "0x" as `0x${string}`,
+    };
+
+    if (isDeposit) {
+      writeSelfBridge({
+        address: routerAddr!,
+        abi: riseGlobalDepositAbi,
+        functionName: "deposit",
+        args: [{
+          srcAddress: address,
+          dstAddress: dstAddr,
+          amount: parsedAmt,
+          composeMsg: composeMsgHex,
+          nativeFee: lzNativeFee,
+          permit,
+        }, tokenAddress, dappId],
+        chainId: sourceChainId,
+        value: lzNativeFee,
+      });
+    } else {
+      writeSelfBridge({
+        address: routerAddr!,
+        abi: riseGlobalWithdrawAbi,
+        functionName: "withdraw",
+        args: [{
+          srcAddress: address,
+          dstAddress: dstAddr,
+          amount: parsedAmt,
+          nativeFee: lzNativeFee,
+          permit,
+        }, tokenAddress, destLzEid!],
+        chainId: sourceChainId,
+        value: lzNativeFee,
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, tokenAddress, amount, token, lzNativeFee, recipientAddress, isDeposit, dappId, authorativeComposeMsg, routerAddr, sourceChainId, destLzEid]);
+
+  /** Handle Permit2 sign + self-bridge in one flow */
+  const handlePermit2Bridge = useCallback(async () => {
+    if (!address || !tokenAddress || !amount || !token || !routerAddr) return;
+    setError(null);
+
+    try {
+      const parsedAmt = parseUnits(amount, token.decimals);
+      const dstAddr = (recipientAddress || address) as Address;
+      const routeParam = isDeposit ? dappId : (destLzEid ?? 0);
+
+      const permitData = await permit2.signPermit({
+        amount: parsedAmt,
+        spender: routerAddr,
+        srcAddress: address,
+        dstAddress: dstAddr,
+        routeParam,
+      });
+
+      await handleSelfBridge(permitData);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Permit2 signing failed";
+      setError(msg.length > 200 ? msg.slice(0, 200) + "..." : msg);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, tokenAddress, amount, token, routerAddr, recipientAddress, isDeposit, dappId, destLzEid, permit2.signPermit, handleSelfBridge]);
+
+  /** Operator + Permit2: sign permit, then send to backend for processing */
+  const handleOperatorPermit2 = useCallback(async () => {
+    if (!address || !tokenAddress || !amount || !token || !routerAddr || !depositAddress) return;
+    setError(null);
+    setIsPermit2Submitting(true);
+
+    try {
+      const parsedAmt = parseUnits(amount, token.decimals);
+      const dstAddr = (recipientAddress || address) as Address;
+      const routeParam = isDeposit ? dappId : (destLzEid ?? 0);
+
+      // Step 1: Sign the permit (wallet popup)
+      const permitData = await permit2.signPermit({
+        amount: parsedAmt,
+        spender: routerAddr,
+        srcAddress: address,
+        dstAddress: dstAddr,
+        routeParam,
+      });
+
+      // Step 2: Submit to backend BEFORE creating session.
+      // Creating session first would set status="awaiting_transfer" which shows
+      // the vault-funded "Send" UI — wrong for permit2 which has no transfer step.
+      const res = await submitPermit({
+        srcEid: chainIdToEid(sourceChainId),
+        dstEid: chainIdToEid(destChainId),
+        token: tokenAddress,
+        sender: address,
+        receiver: dstAddr,
+        amount: parsedAmt.toString(),
+        dappId,
+        permit: {
+          deadline: permitData.deadline.toString(),
+          nonce: permitData.nonce.toString(),
+          signature: permitData.signature,
+        },
+      });
+
+      // Step 3: Create session with jobId already set → goes straight to "polling" step
+      const session = createSession({
+        userAddress: address,
+        recipientAddress: dstAddr,
+        depositAddress,
+      });
+
+      updateSession(session.id, {
+        status: mapBackendStatus(res.status),
+        jobId: res.jobId,
+        userTransferTxHash: "permit2",
+      });
+
+      startPolling(res.jobId, session.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Permit2 signing failed";
+      setError(msg.length > 200 ? msg.slice(0, 200) + "..." : msg);
+    } finally {
+      setIsPermit2Submitting(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, tokenAddress, amount, token, routerAddr, depositAddress, recipientAddress, isDeposit, dappId, destLzEid, sourceChainId, destChainId, permit2.signPermit]);
+
   const handleInitiateBridge = () => {
     if (!address || !depositAddress) return;
     setError(null);
 
-    // Do NOT create session yet -- only move to transfer step.
-    // Session is created once the user actually submits the on-chain tx.
-
     // Check if user is on the right chain
     if (walletChainId !== sourceChainId) {
       switchChain({ chainId: sourceChainId });
+      return;
     }
 
-    setStep("transfer");
+    // Self-bridge + Permit2: sign and bridge in one flow
+    if (isSelfBridge && isPermit2) {
+      handlePermit2Bridge();
+      return;
+    }
+
+    // Operator + Permit2: sign permit, send to backend
+    if (!isSelfBridge && isPermit2) {
+      handleOperatorPermit2();
+      return;
+    }
+
+    // VaultFunded (both modes): create session to enter transfer step.
+    // Reset wagmi hook state so stale tx hashes from previous sessions don't leak in.
+    resetTransfer();
+    resetSelfBridge();
+    createSession({
+      userAddress: address,
+      recipientAddress: recipientAddress || address,
+      depositAddress,
+    });
   };
 
   const handleCancelTransfer = () => {
     setError(null);
-    setStep("form");
-    // Don't reset form fields so the user keeps their amount/token selection
+    resetTransfer();
+    resetSelfBridge();
+    setActiveSession(null);
   };
 
   const handleSendTransfer = () => {
     if (!tokenAddress || !depositAddress || !amount || !token) return;
+    // Prevent double-send: don't send if already submitted or mined
+    if (transferHash || transferDone) return;
     setError(null);
 
     const parsedAmount = parseUnits(amount, token.decimals);
@@ -476,32 +973,13 @@ export function BridgePanel() {
     });
   };
 
-  const handleRetry = async () => {
+  const handleRetry = () => {
     setError(null);
 
-    // If the active session has a jobId and is in failed/error status, try the real retry API
-    if (activeSession?.jobId && (activeSession.status === "failed" || activeSession.status === "error")) {
-      try {
-        const res = await retryBridgeJob(activeSession.jobId);
-        updateSession(activeSession.id, {
-          status: mapBackendStatus(res.status),
-          error: undefined,
-        });
-        setStep("polling");
-        startPolling(activeSession.jobId, activeSession.id);
-        return;
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : "Retry failed";
-        setError(errMsg);
-        // Fall through to reset if retry fails
-      }
-    }
-
-    // If no jobId or retry failed, reset to form
+    // Reset to form so user can re-submit
     if (activeSession) {
       updateSession(activeSession.id, { status: "idle" });
     }
-    setStep("form");
     resetForm();
   };
 
@@ -513,22 +991,150 @@ export function BridgePanel() {
     }
   };
 
+  /** Submit a manually pasted tx hash for operator vault-funded processing.
+   *  Verifies the tx receipt on-chain before submitting to the backend:
+   *  - Tx must be mined (have a receipt)
+   *  - Tx must be successful (status = 1)
+   *  - Receipt must contain an ERC20 Transfer log to the vault address */
+  const handleManualTxHash = useCallback(async () => {
+    const hash = manualTxHash.trim() as `0x${string}`;
+    if (!hash || !/^0x[a-fA-F0-9]{64}$/.test(hash)) {
+      setError("Invalid tx hash. Must be a 66-character hex string (0x...).");
+      return;
+    }
+    if (!activeSession || !address || !depositAddress || !publicClient) return;
+
+    setError(null);
+    setIsSubmittingManual(true);
+
+    // ERC20 Transfer(address,address,uint256) event topic
+    const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+    try {
+      // 1. Fetch tx receipt from source chain
+      const receipt = await publicClient.getTransactionReceipt({ hash });
+
+      if (!receipt) {
+        setError("Transaction not found. Make sure the hash is correct and the tx is mined.");
+        setIsSubmittingManual(false);
+        return;
+      }
+
+      if (receipt.status !== "success") {
+        setError("Transaction reverted on-chain. Cannot use a failed transaction.");
+        setIsSubmittingManual(false);
+        return;
+      }
+
+      // 2. Check for ERC20 Transfer log to the vault address
+      const vaultLower = depositAddress.toLowerCase();
+      const hasTransferToVault = receipt.logs.some((log) => {
+        if (log.topics[0] !== TRANSFER_TOPIC) return false;
+        // topics[2] = `to` address (zero-padded to 32 bytes)
+        const toTopic = log.topics[2];
+        if (!toTopic) return false;
+        const toAddr = ("0x" + toTopic.slice(26)).toLowerCase();
+        return toAddr === vaultLower;
+      });
+
+      if (!hasTransferToVault) {
+        setError(
+          `No ERC20 transfer to vault ${depositAddress.slice(0, 6)}...${depositAddress.slice(-4)} found in this tx. Verify you sent tokens to the correct vault address.`
+        );
+        setIsSubmittingManual(false);
+        return;
+      }
+
+      // 3. Tx verified — update session
+      updateSession(activeSession.id, {
+        userTransferTxHash: hash,
+        status: "transfer_mined",
+      });
+
+      // For self-bridge: just set the hash, user will click "Complete Bridge"
+      if (activeSession.bridgeMode === "self") {
+        setIsSubmittingManual(false);
+        return;
+      }
+
+      // 4. Operator mode: submit to backend
+      const sessionDappId = activeSession.dappId ?? 0;
+
+      const res = await submitVaultFunded({
+        srcEid: chainIdToEid(activeSession.sourceChainId),
+        dstEid: chainIdToEid(activeSession.destChainId),
+        userTransferTxHash: hash,
+        token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
+        receiver: activeSession.recipientAddress || activeSession.userAddress,
+        dappId: sessionDappId,
+      });
+
+      updateSession(activeSession.id, {
+        status: mapBackendStatus(res.status),
+        jobId: res.jobId,
+      });
+
+      startPolling(res.jobId, activeSession.id);
+      setManualTxHash("");
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Verification failed";
+      // Don't mark session as error if it's just a validation failure
+      if (activeSession.status === "awaiting_transfer") {
+        setError(errMsg.length > 200 ? errMsg.slice(0, 200) + "..." : errMsg);
+      } else {
+        updateSession(activeSession.id, { status: "error", error: errMsg });
+        setError(errMsg.length > 200 ? errMsg.slice(0, 200) + "..." : errMsg);
+      }
+    } finally {
+      setIsSubmittingManual(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualTxHash, activeSession, address, depositAddress, publicClient, authorativeComposeMsg]);
+
+  const handleSwapDirection = () => {
+    setError(null);
+    swapDirection();
+  };
+
   const currentStatus: BridgeStatus = activeSession?.status ?? "idle";
   const sourceChain = CHAINS[sourceChainId];
   const destChain = CHAINS[destChainId];
 
-  // Data-driven flag: show tracking view whenever the session has a jobId
-  // (meaning the backend was involved). This works regardless of status --
-  // even if status was reset to "idle" by a retry or "Start Over".
-  const showTrackingView = !!(
+  // Data-driven flag: show tracking view whenever the session has a jobId or self-bridge tx
+  // For self-bridge + vault-funded: don't show tracking until the bridge tx is submitted
+  // (the user needs to see the "Complete Bridge" button after the vault transfer mines)
+  // Also covers sessions where the user funded the vault but hasn't bridged yet
+  // (no selfBridgeTxHash, no jobId, no backendProcessTxHash — nothing happened after funding)
+  const isSelfVaultPending = !!(
     activeSession &&
-    (activeSession.jobId || (activeSession.userTransferTxHash && activeSession.status !== "idle"))
+    activeSession.bridgeMode === "self" &&
+    activeSession.userTransferTxHash &&
+    !activeSession.selfBridgeTxHash &&
+    !activeSession.jobId &&
+    !activeSession.backendProcessTxHash &&
+    (activeSession.status === "transfer_mined" || activeSession.status === "deposit_verified")
+  );
+
+  // Operator mode: vault funded but backend hasn't picked it up yet
+  const isOperatorVaultPending = !!(
+    activeSession &&
+    activeSession.bridgeMode !== "self" &&
+    activeSession.userTransferTxHash &&
+    !activeSession.jobId &&
+    !activeSession.backendProcessTxHash &&
+    (activeSession.status === "transfer_mined" || activeSession.status === "deposit_verified")
   );
 
   // Dust amount warning
   const parsedAmount =
     amount && token ? parseUnits(amount || "0", token.decimals) : 0n;
   const isDustWarning = parsedAmount > 0n && parsedAmount < 1000n;
+
+  // Fee exceeds amount check — flat fee mode: amount must be > flatFee
+  const isFeeExceedsAmount = !isFeeExempt && feeMode === 1 && parsedAmount > 0n && flatFee >= parsedAmount;
+
+  // Rate limit exceeded check
+  const isRateLimitExceeded = !isDeposit && rateLimitInfo && parsedAmount > 0n && parsedAmount > rateLimitInfo.available;
 
   // Shared error + retry banner used in both form and transfer steps
   const renderErrorBanner = (message: string) => (
@@ -538,16 +1144,7 @@ export function BridgePanel() {
         <span>{message}</span>
       </div>
       <div className="flex gap-2">
-        {activeSession?.jobId ? (
-          <Button
-            variant="outline"
-            onClick={handleRetry}
-            className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Retry Bridge Job
-          </Button>
-        ) : activeSession?.userTransferTxHash ? (
+        {activeSession?.userTransferTxHash && activeSession.bridgeMode !== "self" && !activeSession?.jobId ? (
           <Button
             variant="outline"
             onClick={() => {
@@ -567,7 +1164,6 @@ export function BridgePanel() {
             if (activeSession) {
               updateSession(activeSession.id, { status: "idle", error: undefined });
             }
-            setStep("form");
             resetForm();
           }}
           className="h-10 font-mono text-sm gap-2 text-muted-foreground"
@@ -581,19 +1177,19 @@ export function BridgePanel() {
   // --- Render ---
   return (
     <div className="flex flex-col gap-4">
-      {/* Status rail - visible when session has progressed past idle, or has a jobId/error */}
-      {activeSession &&
+      {/* Status rail - visible when session has progressed past idle (not on form step) */}
+      {step !== "form" && activeSession &&
         (activeSession.status !== "idle" || activeSession.jobId || activeSession.error) &&
         activeSession.status !== "awaiting_transfer" && (
         <div className="p-3 rounded-lg border border-border bg-card">
           <StatusRail
             currentStatus={(() => {
-              if (isComposeFailed(activeSession)) return "failed" as const;
+              if ((activeSession.dappId ?? 0) > 0 && isComposeFailed(activeSession)) return "failed" as const;
               if (activeSession.error && currentStatus === "idle") return "error" as const;
               return currentStatus;
             })()}
             error={(() => {
-              if (isComposeFailed(activeSession)) return "lzCompose failed on destination chain";
+              if ((activeSession.dappId ?? 0) > 0 && isComposeFailed(activeSession)) return "lzCompose failed on destination chain";
               return activeSession.error ?? error ?? undefined;
             })()}
           />
@@ -601,7 +1197,7 @@ export function BridgePanel() {
       )}
 
       {/* --- FORM STEP --- */}
-      {step === "form" && !showTrackingView && (
+      {step === "form" && (
         <div className="flex flex-col gap-4">
           {/* Source chain */}
           <div className="p-3 sm:p-4 rounded-lg border border-border bg-card">
@@ -609,31 +1205,10 @@ export function BridgePanel() {
               From
             </label>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              <Select
-                value={String(sourceChainId)}
-                onValueChange={(v) => setSourceChainId(Number(v))}
-              >
-                <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BRIDGE_ROUTES.map((r) => {
-                    const meta = CHAINS[r.sourceChainId];
-                    return (
-                      <SelectItem
-                        key={r.sourceChainId}
-                        value={String(r.sourceChainId)}
-                        className="font-mono text-sm"
-                      >
-                        <span className="flex items-center gap-2">
-                          <ChainIcon chainKey={meta?.iconKey} className="h-4 w-4" />
-                          {meta?.label}
-                        </span>
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2 w-full sm:w-52 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm font-mono">
+                <ChainIcon chainKey={sourceChain?.iconKey} className="h-4 w-4" />
+                <span>{sourceChain?.label}</span>
+              </div>
 
               <Select
                 value={tokenKey}
@@ -724,11 +1299,19 @@ export function BridgePanel() {
             </div>
           </div>
 
-          {/* Arrow */}
-          <div className="flex justify-center -my-2">
-            <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
-              <ArrowDown className="h-4 w-4 text-muted-foreground" />
-            </div>
+          {/* Swap direction button */}
+          <div className="flex justify-center -my-2 z-10">
+            <button
+              onClick={handleSwapDirection}
+              className={cn(
+                "h-9 w-9 rounded-full flex items-center justify-center transition-all duration-200",
+                "bg-card border-2 border-border hover:border-primary hover:bg-primary/10",
+                "group"
+              )}
+              title={`Switch to ${isDeposit ? "Withdraw" : "Deposit"}`}
+            >
+              <ArrowUpDown className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            </button>
           </div>
 
           {/* Destination chain */}
@@ -736,39 +1319,251 @@ export function BridgePanel() {
             <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2 block">
               To
             </label>
-            <Select
-              value={String(destChainId)}
-              onValueChange={(v) => setDestChainId(Number(v))}
-            >
-              <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BRIDGE_ROUTES.map((r) => {
-                  const meta = CHAINS[r.destChainId];
-                  return (
-                    <SelectItem
-                      key={r.destChainId}
-                      value={String(r.destChainId)}
-                      className="font-mono text-sm"
+            <div className="flex items-center gap-2 w-full sm:w-52 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm font-mono">
+              <ChainIcon chainKey={destChain?.iconKey} className="h-4 w-4" />
+              <span>{destChain?.label}</span>
+            </div>
+
+            {/* Receive amount preview */}
+            {amount && parseFloat(amount) > 0 && (
+              <div className="mt-3 flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                  You Receive
+                </span>
+                <span className="text-xs font-mono text-foreground">
+                  ~{(() => {
+                    const parsed = parseFloat(amount);
+                    if (isFeeExempt) return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+                    if (isFeeExceedsAmount) return "0.00";
+                    if (onChainProtocolFee !== undefined && token) {
+                      const feeFloat = Number(onChainProtocolFee) / (10 ** token.decimals);
+                      const net = parsed - feeFloat;
+                      return (net > 0 ? net : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+                    }
+                    if (feeMode === 1 && token) {
+                      const ff = Number(flatFee) / (10 ** token.decimals);
+                      const net = parsed - ff;
+                      return (net > 0 ? net : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+                    }
+                    return (parsed * (1 - Number(feeBps) / 10000)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+                  })()}{" "}
+                  {token?.symbol}
+                </span>
+              </div>
+            )}
+
+            {/* Recipient address toggle */}
+            <div className="mt-3">
+              {!showRecipient ? (
+                <button
+                  type="button"
+                  onClick={() => setShowRecipient(true)}
+                  className="text-[10px] font-mono uppercase tracking-wider text-primary hover:text-primary/80 transition-colors"
+                >
+                  + Custom Recipient
+                </button>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                      Recipient Address
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowRecipient(false);
+                        setRecipientAddress("");
+                      }}
+                      className="text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
                     >
-                      <span className="flex items-center gap-2">
-                        <ChainIcon chainKey={meta?.iconKey} className="h-4 w-4" />
-                        {meta?.label}
-                      </span>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
+                      Use own address
+                    </button>
+                  </div>
+                  <Input
+                    type="text"
+                    placeholder={address ?? "0x..."}
+                    value={recipientAddress}
+                    onChange={(e) => setRecipientAddress(e.target.value.trim())}
+                    className="font-mono text-xs bg-muted/30 border-border h-9"
+                  />
+                  {recipientAddress && !/^0x[a-fA-F0-9]{40}$/.test(recipientAddress) && (
+                    <span className="text-[10px] font-mono text-destructive-foreground">
+                      Invalid address format
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Bridge Mode Toggle */}
+          {isConnected && (
+            <BridgeModeToggle
+              bridgeMode={bridgeMode}
+              onBridgeModeChange={setBridgeMode}
+              transferMode={transferMode}
+              onTransferModeChange={setTransferMode}
+              showTransferMode={true}
+            />
+          )}
+
+          {/* LZ fee display (self-bridge mode) */}
+          {isSelfBridge && isConnected && amount && parseFloat(amount) > 0 && (
+            <div className="p-2.5 rounded-lg border border-border bg-muted/20">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                  LZ Gas Fee
+                </span>
+                <span className="text-xs font-mono text-foreground">
+                  {isLzQuoteLoading ? (
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Quoting...
+                    </span>
+                  ) : lzFeeFormatted ? (
+                    `${Number(lzFeeFormatted).toFixed(6)} ETH`
+                  ) : (
+                    <span className="text-muted-foreground">--</span>
+                  )}
+                </span>
+              </div>
+              <span className="text-[10px] font-mono text-muted-foreground/60">
+                Paid as msg.value when you submit the bridge tx
+              </span>
+            </div>
+          )}
+
+          {/* Permit2 approval (any mode with permit2 transfer) */}
+          {isPermit2 && isConnected && permit2.needsApproval && !permit2.isApprovalConfirmed && (
+            <div className="p-3 rounded-lg border border-warning/30 bg-warning/5">
+              <div className="flex items-start gap-2 mb-2">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warning" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-mono text-foreground">
+                    Permit2 Approval Required
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    One-time approval to let Permit2 pull {token?.symbol}. After this, bridge with just a signature.
+                  </span>
+                </div>
+              </div>
+              {permit2.approvalError && (
+                <div className="mb-2 p-2 rounded bg-destructive/10 border border-destructive/30">
+                  <span className="text-[10px] font-mono text-destructive break-all">
+                    {permit2.approvalError.message.length > 200
+                      ? permit2.approvalError.message.slice(0, 200) + "..."
+                      : permit2.approvalError.message}
+                  </span>
+                </div>
+              )}
+              <Button
+                onClick={() => {
+                  if (permit2.approvalError) permit2.resetApproval();
+                  if (walletChainId !== sourceChainId) {
+                    switchChain({ chainId: sourceChainId });
+                    return;
+                  }
+                  permit2.approve();
+                }}
+                disabled={permit2.isApproving || permit2.isApprovalConfirming}
+                className="w-full h-10 font-mono text-sm bg-warning text-warning-foreground hover:bg-warning/90"
+              >
+                {walletChainId !== sourceChainId ? (
+                  `Switch to ${CHAINS[sourceChainId]?.label ?? "source chain"}`
+                ) : permit2.isApproving ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Confirm in Wallet...
+                  </span>
+                ) : permit2.isApprovalConfirming ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Confirming...
+                  </span>
+                ) : (
+                  `Approve ${token?.symbol} for Permit2`
+                )}
+              </Button>
+            </div>
+          )}
+
+          {/* Permit2 approval confirmed */}
+          {isPermit2 && permit2.isApprovalConfirmed && (
+            <div className="flex items-center gap-1.5 px-2.5 text-[10px] font-mono text-success">
+              <Check className="h-3 w-3" />
+              Permit2 approved
+            </div>
+          )}
+
+          {/* Fee Summary */}
+          {amount && parseFloat(amount) > 0 && (
+            <FeeSummary
+              feeBps={Number(feeBps)}
+              feeExempt={!!isFeeExempt}
+              amount={amount}
+              tokenSymbol={token?.symbol ?? ""}
+              direction={direction}
+              rateLimitLabel={rateLimitLabel}
+              lanePaused={!!isLanePaused}
+              feeMode={feeMode}
+              flatFee={flatFee}
+              tokenDecimals={token?.decimals ?? 6}
+              protocolFee={onChainProtocolFee}
+            />
+          )}
+
+          {/* DEBUG: LZ Quote + Compose diagnostics */}
+          {isConnected && amount && parseFloat(amount) > 0 && (
+            <details className="p-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5">
+              <summary className="text-[10px] font-mono uppercase tracking-wider text-yellow-600 cursor-pointer">
+                Debug: LZ Quote
+              </summary>
+              <pre className="mt-1 text-[9px] font-mono text-muted-foreground whitespace-pre-wrap break-all">
+{JSON.stringify({
+  quote: {
+    ...lzQuoteDebug,
+    lzNativeFee: lzNativeFee?.toString() ?? "undefined",
+    protocolFee: onChainProtocolFee?.toString() ?? "undefined",
+    isLoading: isLzQuoteLoading,
+    isError: isLzQuoteError,
+  },
+  compose: {
+    composeMsg: authorativeComposeMsg?.slice(0, 40) + (authorativeComposeMsg && authorativeComposeMsg.length > 40 ? "..." : ""),
+    isComposeLoading,
+    dappId,
+  },
+  feeConfig: {
+    feeBps: feeBps.toString(),
+    feeMode,
+    flatFee: flatFee.toString(),
+    tokenFeeConfigLoaded: !!tokenFeeConfig,
+    isFeeExempt: !!isFeeExempt,
+  },
+  bridge: {
+    isSelfBridge,
+    direction,
+    dustRate: dustRate.toString(),
+  },
+}, null, 2)}
+              </pre>
+            </details>
+          )}
+
+          {/* Dapp selector (deposit-only) */}
+          {isDeposit && isConnected && (
+            <DappSelector
+              sourceChainId={sourceChainId}
+              dappId={dappId}
+              onDappChange={setDappId}
+            />
+          )}
 
           {/* Deposit address preview */}
           {isConnected && (
             <div className="p-2.5 sm:p-3 rounded-lg border border-border bg-muted/20">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                  Deposit Address
+                  {isDeposit ? "Deposit Address" : "Withdrawal Vault Address"}
                 </span>
                 {depositAddress && (
                   <button
@@ -787,7 +1582,7 @@ export function BridgePanel() {
                 <div className="flex items-center gap-2 py-1">
                   <Loader2 className="h-3 w-3 animate-spin text-primary" />
                   <span className="font-mono text-xs text-muted-foreground">
-                    Computing deposit address...
+                    Computing address...
                   </span>
                 </div>
               ) : isComputeError ? (
@@ -817,6 +1612,14 @@ export function BridgePanel() {
             </div>
           )}
 
+          {/* On-chain compose verification badge */}
+          {dappId > 0 && isDeposit && !isComposeLoading && authorativeComposeMsg !== "0x" && (
+            <div className="flex items-center gap-1.5 px-2.5 text-[10px] font-mono text-muted-foreground">
+              <Check className="h-3 w-3 text-success" />
+              Compose msg verified on-chain
+            </div>
+          )}
+
           {/* Chain mismatch warning */}
           {isConnected && walletChainId !== sourceChainId && (
             <div className="flex items-center gap-2 px-3 py-2 rounded bg-warning/10 border border-warning/20 text-xs font-mono text-warning">
@@ -836,6 +1639,40 @@ export function BridgePanel() {
             </div>
           )}
 
+          {/* Rate limit exceeded warning */}
+          {isRateLimitExceeded && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded bg-warning/10 border border-warning/20 text-xs font-mono text-warning">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span>
+                Amount exceeds rate limit. Available: {rateLimitLabel}
+              </span>
+            </div>
+          )}
+
+          {/* Fee exceeds amount warning */}
+          {isFeeExceedsAmount && token && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded bg-warning/10 border border-warning/20 text-xs font-mono text-warning">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span>
+                Amount is below the flat fee ({(Number(flatFee) / (10 ** token.decimals)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} {token.symbol}). Increase amount.
+              </span>
+            </div>
+          )}
+
+          {/* Blocklist warning */}
+          {isBlocked && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-xs font-mono text-destructive-foreground">
+              <Shield className="h-3 w-3 shrink-0" />
+              <span>
+                {isSenderBlocked && isRecipientBlocked
+                  ? "Sender and recipient addresses are blocked."
+                  : isSenderBlocked
+                    ? "Your address is blocked from bridging."
+                    : "Recipient address is blocked from bridging."}
+              </span>
+            </div>
+          )}
+
           {/* Error banner + retry for failed backend processing */}
           {activeSession && (activeSession.status === "error" || activeSession.status === "failed") && (error || activeSession.error) &&
             renderErrorBanner(error || activeSession.error || "Bridge transaction failed.")
@@ -849,46 +1686,122 @@ export function BridgePanel() {
               !amount ||
               parseFloat(amount) <= 0 ||
               !depositAddress ||
-              isComputingDeposit
+              isComputingDeposit ||
+              !!isLanePaused ||
+              !!isRateLimitExceeded ||
+              isBlocked ||
+              isFeeExceedsAmount ||
+              (!!recipientAddress && !/^0x[a-fA-F0-9]{40}$/.test(recipientAddress)) ||
+              (isSelfBridge && (isLzQuoteLoading || isComposeLoading)) ||
+              (isSelfBridge && !lzNativeFee) ||
+              (isPermit2 && permit2.needsApproval && !permit2.isApprovalConfirmed) ||
+              isSelfBridgePending ||
+              isWaitingSelfBridge ||
+              permit2.isSigning ||
+              isPermit2Submitting
             }
-            className="h-12 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90"
+            className={cn(
+              "h-12 font-mono text-sm",
+              isDeposit
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "bg-chart-5 text-white hover:bg-chart-5/90"
+            )}
           >
             {!isConnected ? (
               "Connect Wallet First"
             ) : isComputingDeposit ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Computing Deposit Address...
+                Computing Address...
               </span>
             ) : isComputeError ? (
-              "Deposit Address Error -- Retry Above"
+              "Address Error -- Retry Above"
             ) : !depositAddress ? (
-              "Waiting for Deposit Address..."
+              "Waiting for Address..."
+            ) : isLanePaused ? (
+              "Lane Paused"
+            ) : isRateLimitExceeded ? (
+              "Rate Limit Exceeded"
+            ) : isFeeExceedsAmount ? (
+              "Amount Below Minimum Fee"
+            ) : isBlocked ? (
+              "Address Blocked"
+            ) : isSelfBridge && (isComposeLoading || isLzQuoteLoading) ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {isComposeLoading ? "Building Compose Msg..." : "Quoting LZ Fee..."}
+              </span>
+            ) : isSelfBridge && isLzQuoteError ? (
+              "LZ Quote Failed — Check Amount"
+            ) : isSelfBridge && !lzNativeFee ? (
+              "Waiting for LZ Quote..."
+            ) : isPermit2 && permit2.needsApproval && !permit2.isApprovalConfirmed ? (
+              "Approve Permit2 First"
+            ) : permit2.isSigning ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Sign Permit2...
+              </span>
+            ) : isPermit2Submitting ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Submitting Permit2...
+              </span>
+            ) : isSelfBridgePending ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Confirm Bridge Tx...
+              </span>
+            ) : isWaitingSelfBridge ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Bridge Tx Confirming...
+              </span>
             ) : !amount || parseFloat(amount) <= 0 ? (
               "Enter Amount"
             ) : (
-              `Bridge ${amount} ${token?.symbol}`
+              <>
+                {isPermit2 ? "Sign & " : ""}
+                {isDeposit ? "Deposit" : "Withdraw"} {amount} {token?.symbol}
+                {isSelfBridge ? " (Self Bridge)" : ""}
+              </>
             )}
           </Button>
         </div>
       )}
 
       {/* --- TRANSFER STEP --- */}
-      {step === "transfer" && !showTrackingView && (
+      {step === "transfer" && (
         <div className="flex flex-col gap-4">
-          <div className="p-4 rounded-lg border border-primary/30 bg-primary/5">
+          {/* Session ID */}
+          {activeSession && (
+            <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground/50">
+              <span>Session: {activeSession.id}</span>
+              <span>|</span>
+              <span>Mode: {activeSession.bridgeMode}/{activeSession.transferMode}</span>
+              <span>|</span>
+              <span>Dapp: {activeSession.dappId ?? 0}</span>
+            </div>
+          )}
+          <div className={cn(
+            "p-4 rounded-lg border",
+            isDeposit ? "border-primary/30 bg-primary/5" : "border-chart-5/30 bg-chart-5/5"
+          )}>
             <div className="flex items-start gap-3">
-              <Shield className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+              <Shield className={cn("h-5 w-5 mt-0.5 shrink-0", isDeposit ? "text-primary" : "text-chart-5")} />
               <div className="flex flex-col gap-1 min-w-0">
                 <span className="text-sm font-mono text-foreground">
-                  Send {amount} {token?.symbol} to deposit address
+                  Send {amount} {token?.symbol} to {isDeposit ? "deposit" : "withdrawal"} address
                 </span>
                 <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
                   {depositAddress}
                 </p>
                 <button
                   onClick={handleCopyDeposit}
-                  className="flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors mt-1 self-start"
+                  className={cn(
+                    "flex items-center gap-1 text-[10px] font-mono transition-colors mt-1 self-start",
+                    isDeposit ? "text-primary hover:text-primary/80" : "text-chart-5 hover:text-chart-5/80"
+                  )}
                 >
                   {depositCopied ? (
                     <>
@@ -906,39 +1819,80 @@ export function BridgePanel() {
             </div>
           </div>
 
-          {/* Transfer action */}
-          <div className="flex gap-2">
-            {/* Cancel -- only available before tx is submitted */}
-            {!transferHash && (
-              <Button
-                variant="outline"
-                onClick={handleCancelTransfer}
-                disabled={isTransferPending}
-                className="h-12 font-mono text-sm flex-shrink-0"
-              >
-                Cancel
-              </Button>
-            )}
-            <Button
-              onClick={handleSendTransfer}
-              disabled={isTransferPending || isWaitingForTx}
-              className="h-12 font-mono text-sm bg-primary text-primary-foreground hover:bg-primary/90 flex-1"
-            >
-              {isTransferPending ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Confirm in Wallet...
-                </span>
-              ) : isWaitingForTx ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Waiting for Confirmation...
-                </span>
-              ) : (
-                `Send ${amount} ${token?.symbol}`
+          {/* Transfer action — hidden once transfer is mined */}
+          {!transferDone && (
+            <div className="flex gap-2">
+              {/* Cancel -- only available before tx is submitted */}
+              {!transferHash && (
+                <Button
+                  variant="outline"
+                  onClick={handleCancelTransfer}
+                  disabled={isTransferPending}
+                  className="h-12 font-mono text-sm flex-shrink-0"
+                >
+                  Cancel
+                </Button>
               )}
-            </Button>
-          </div>
+              <Button
+                onClick={handleSendTransfer}
+                disabled={isTransferPending || isWaitingForTx || transferDone}
+                className={cn(
+                  "h-12 font-mono text-sm flex-1",
+                  isDeposit
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "bg-chart-5 text-white hover:bg-chart-5/90"
+                )}
+              >
+                {isTransferPending ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Confirm in Wallet...
+                  </span>
+                ) : isWaitingForTx ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Waiting for Confirmation...
+                  </span>
+                ) : (
+                  `Send ${amount} ${token?.symbol}`
+                )}
+              </Button>
+            </div>
+          )}
+
+          {/* Already transferred? Paste tx hash — visible before wallet tx is submitted */}
+          {!transferHash && !transferDone && (
+            <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/50 bg-muted/10">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                Already transferred? Paste tx hash
+              </span>
+              <div className="flex gap-2">
+                <Input
+                  value={manualTxHash}
+                  onChange={(e) => setManualTxHash(e.target.value)}
+                  placeholder="0x..."
+                  className={cn(
+                    "h-9 font-mono text-[11px] flex-1",
+                    manualTxHash && !/^0x[a-fA-F0-9]{64}$/.test(manualTxHash) && "border-destructive/50"
+                  )}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!manualTxHash.trim() || isSubmittingManual}
+                  onClick={handleManualTxHash}
+                  className="h-9 font-mono text-xs gap-1.5 shrink-0"
+                >
+                  {isSubmittingManual ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <ArrowDown className="h-3 w-3" />
+                  )}
+                  {isSubmittingManual ? "Submitting..." : "Submit"}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Tx hash badges */}
           {transferHash && (
@@ -949,16 +1903,123 @@ export function BridgePanel() {
             />
           )}
 
+          {/* Self-bridge VaultFunded: show "Complete Bridge" after transfer is mined */}
+          {(isSelfVaultPending || (isSelfBridge && !isPermit2 && transferDone && !selfBridgeHash)) && (
+            <div className="flex flex-col gap-2">
+              <div className="p-2.5 rounded-lg border border-primary/30 bg-primary/5">
+                <span className="text-xs font-mono text-foreground">
+                  Tokens transferred. Now submit the bridge transaction.
+                </span>
+                {lzFeeFormatted && (
+                  <span className="block text-[10px] font-mono text-muted-foreground mt-1">
+                    LZ Gas: {Number(lzFeeFormatted).toFixed(6)} ETH (paid from your wallet)
+                  </span>
+                )}
+                {!lzNativeFee && !isLzQuoteLoading && (
+                  <span className="block text-[10px] font-mono text-destructive-foreground mt-1">
+                    LZ quote failed{isLzQuoteError ? " (on-chain call reverted)" : ""}.
+                    {isFeeExceedsAmount ? " Amount is below minimum fee." : ""}
+                    {isComposeLoading ? " Compose msg loading..." : authorativeComposeMsg === "0x" && dappId > 0 ? " Compose msg empty." : ""}
+                  </span>
+                )}
+                {isLzQuoteLoading && (
+                  <span className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground mt-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Fetching LZ gas quote...
+                  </span>
+                )}
+              </div>
+              <Button
+                onClick={() => handleSelfBridge()}
+                disabled={isSelfBridgePending || isWaitingSelfBridge || !lzNativeFee}
+                className={cn(
+                  "h-12 font-mono text-sm",
+                  isDeposit
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "bg-chart-5 text-white hover:bg-chart-5/90"
+                )}
+              >
+                {isSelfBridgePending ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Confirm Bridge Tx...
+                  </span>
+                ) : isWaitingSelfBridge ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Bridge Tx Confirming...
+                  </span>
+                ) : !lzNativeFee ? (
+                  isLzQuoteLoading ? "Loading Quote..." : "Quote Unavailable"
+                ) : (
+                  `Complete Bridge (${isDeposit ? "Deposit" : "Withdraw"})`
+                )}
+              </Button>
+
+              {/* Recovery option when quote fails — rescue tokens from vault */}
+              {!lzNativeFee && !isLzQuoteLoading && activeSession && (
+                <RecoveryPanel session={activeSession} />
+              )}
+            </div>
+          )}
+
+          {/* Operator mode: vault funded, awaiting backend processing */}
+          {isOperatorVaultPending && (
+            <div className="flex flex-col gap-2">
+              <div className="p-2.5 rounded-lg border border-primary/30 bg-primary/5">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  <span className="text-xs font-mono text-foreground">
+                    Awaiting backend processing...
+                  </span>
+                </div>
+                <span className="block text-[10px] font-mono text-muted-foreground mt-1">
+                  The operator will pick up your deposit and submit the bridge transaction.
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setError(null);
+                  handlePostMine();
+                }}
+                className="h-10 font-mono text-sm gap-2 border-primary/30 hover:bg-primary/10"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Retry Backend Submission
+              </Button>
+              {/* Recovery option for stuck operator sessions */}
+              {activeSession && (Date.now() - activeSession.createdAt > 120_000) && (
+                <RecoveryPanel session={activeSession} />
+              )}
+            </div>
+          )}
+
+          {/* Self-bridge tx hash */}
+          {selfBridgeHash && (
+            <TxBadge
+              label="Bridge Tx"
+              hash={selfBridgeHash}
+              explorerUrl={sourceChain?.explorerTxUrl(selfBridgeHash)}
+            />
+          )}
+
           {error && renderErrorBanner(error)}
         </div>
       )}
 
       {/* --- SESSION TRACKING VIEW --- */}
-      {/* Purely data-driven: no dependency on local `step` state.
-          TrackingCard handles its own error display + retry button internally. */}
-      {showTrackingView && activeSession && (
+      {(step === "polling" || step === "complete") && activeSession && (
         <div className="flex flex-col gap-4">
-          <TrackingCard session={activeSession} feeBps={feeBps} dustRate={dustRate} />
+          {/* Session ID */}
+          <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground/50">
+            <span>Session: {activeSession.id}</span>
+            <span>|</span>
+            <span>Mode: {activeSession.bridgeMode}/{activeSession.transferMode}</span>
+            <span>|</span>
+            <span>Dapp: {activeSession.dappId ?? 0}</span>
+          </div>
+          <TrackingCard session={activeSession} />
 
           {/* New bridge button below tracking */}
           <Button
@@ -966,7 +2027,6 @@ export function BridgePanel() {
             onClick={() => {
               setError(null);
               setActiveSession(null);
-              setStep("form");
               resetForm();
             }}
             className="h-9 font-mono text-[11px] gap-1.5 text-muted-foreground hover:text-foreground self-center"

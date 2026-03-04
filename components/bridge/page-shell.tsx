@@ -10,7 +10,7 @@ export function PageShell({ children }: { children: React.ReactNode }) {
         <BridgeHeader />
         <div className="mt-4 sm:mt-6">{children}</div>
         <footer className="mt-6 sm:mt-8 pb-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground/40">
-          <span>RISE Global Deposit Bridge v0.1.0</span>
+          <span>RISE Bridge v0.2.0</span>
           <div className="flex items-center gap-4">
             <ExternalLinksBar />
           </div>

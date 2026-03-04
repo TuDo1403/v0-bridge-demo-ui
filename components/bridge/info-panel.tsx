@@ -1,9 +1,9 @@
 "use client";
 
 import { useAccount, useReadContract } from "wagmi";
-import { riseGlobalDepositAbi, erc20Abi } from "@/lib/abi";
+import { riseGlobalDepositAbi, riseGlobalWithdrawAbi, erc20Abi } from "@/lib/abi";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { CONTRACTS, getTokenAddress, TOKENS } from "@/config/contracts";
+import { CONTRACTS, getTokenAddress, getGlobalDepositAddress, getGlobalWithdrawAddress, TOKENS } from "@/config/contracts";
 import { CHAINS } from "@/config/chains";
 import { formatUnits, type Address } from "viem";
 import { Loader2, AlertCircle, RefreshCcw } from "lucide-react";
@@ -76,10 +76,13 @@ function DataRow({
 
 export function InfoPanel() {
   const { address, isConnected } = useAccount();
-  const { sourceChainId, destChainId, tokenKey, depositAddress } =
+  const { sourceChainId, destChainId, tokenKey, depositAddress, direction } =
     useBridgeStore();
 
-  const globalDepositAddr = CONTRACTS[sourceChainId]?.globalDeposit;
+  const isDeposit = direction === "deposit";
+  const globalDepositAddr = getGlobalDepositAddress(sourceChainId);
+  const globalWithdrawAddr = getGlobalWithdrawAddress(sourceChainId);
+  const routerAddr = isDeposit ? globalDepositAddr : globalWithdrawAddr;
   const tokenAddress = getTokenAddress(tokenKey, sourceChainId);
   const token = TOKENS[tokenKey];
   const sourceChain = CHAINS[sourceChainId];
@@ -92,14 +95,14 @@ export function InfoPanel() {
     isError: isFeeError,
     refetch: refetchFee,
   } = useReadContract({
-    address: globalDepositAddr,
-    abi: riseGlobalDepositAbi,
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
     functionName: "getFeeConfig",
     chainId: sourceChainId,
-    query: { enabled: !!globalDepositAddr, retry: 3, retryDelay: 2000 },
+    query: { enabled: !!routerAddr, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
   });
 
-  // Destination EID - reads from on-chain contract
+  // Destination EID - reads from on-chain contract (deposit only, withdraw uses lane config)
   const {
     data: dstEid,
     isLoading: isDstEidLoading,
@@ -110,7 +113,7 @@ export function InfoPanel() {
     abi: riseGlobalDepositAbi,
     functionName: "getDstEid",
     chainId: sourceChainId,
-    query: { enabled: !!globalDepositAddr, retry: 3, retryDelay: 2000 },
+    query: { enabled: isDeposit && !!globalDepositAddr, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
   });
 
   // User wallet balance
@@ -127,6 +130,7 @@ export function InfoPanel() {
     chainId: sourceChainId,
     query: {
       enabled: !!address && !!tokenAddress,
+      refetchInterval: 8_000,
       retry: 3,
       retryDelay: 2000,
     },
@@ -146,16 +150,47 @@ export function InfoPanel() {
     chainId: sourceChainId,
     query: {
       enabled: !!depositAddress && !!tokenAddress,
+      refetchInterval: 8_000,
       retry: 3,
       retryDelay: 2000,
     },
   });
+
+  // Per-token fee config (mode + flatFee)
+  const {
+    data: tokenFeeConfig,
+    isLoading: isTokenFeeLoading,
+    isError: isTokenFeeError,
+    refetch: refetchTokenFee,
+  } = useReadContract({
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
+    functionName: "getTokenFeeConfig",
+    args: tokenAddress ? [tokenAddress] : undefined,
+    chainId: sourceChainId,
+    query: { enabled: !!routerAddr && !!tokenAddress, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
+  });
+
+  const tokenFeeMode = tokenFeeConfig ? Number((tokenFeeConfig as [number, bigint])[0]) : null;
+  const tokenFlatFee = tokenFeeConfig ? BigInt((tokenFeeConfig as [number, bigint])[1]) : null;
 
   // Format fee: feeConfig returns [feeBps, feeCollector]
   const feeBps =
     feeConfig !== undefined && feeConfig !== null
       ? (Number((feeConfig as readonly [number, string])[0]) / 100).toFixed(2)
       : null;
+
+  // Combined fee label: flat mode shows absolute amount, percentage mode shows %
+  const feeDisplay = (() => {
+    if (tokenFeeMode === 1 && tokenFlatFee !== null && token) {
+      const flatAmount = Number(tokenFlatFee) / (10 ** token.decimals);
+      return `Flat ${flatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} ${token.symbol}`;
+    }
+    if (feeBps !== null) return `${feeBps}%`;
+    return null;
+  })();
+  const isFeeDisplayLoading = isFeeLoading || isTokenFeeLoading;
+  const isFeeDisplayError = isFeeError || isTokenFeeError;
 
   // Format balances: handle 0n properly (0n is falsy!)
   const walletBal =
@@ -177,7 +212,7 @@ export function InfoPanel() {
   return (
     <div className="flex flex-col gap-3">
       <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-        Contract Info
+        {isDeposit ? "Deposit" : "Withdrawal"} Info
       </span>
 
       <div className="flex flex-col divide-y divide-border">
@@ -198,10 +233,10 @@ export function InfoPanel() {
         />
         <DataRow
           label="Fee"
-          value={feeBps !== null ? `${feeBps}%` : "--"}
-          isLoading={isFeeLoading}
-          isError={isFeeError}
-          onRetry={() => refetchFee()}
+          value={feeDisplay ?? "--"}
+          isLoading={isFeeDisplayLoading}
+          isError={isFeeDisplayError}
+          onRetry={() => { refetchFee(); refetchTokenFee(); }}
         />
         <DataRow label="Token" value={token?.symbol ?? "--"} />
         <DataRow
@@ -230,11 +265,11 @@ export function InfoPanel() {
           isError={isDepBalError}
           onRetry={() => refetchDepBal()}
         />
-        {globalDepositAddr && (
+        {routerAddr && (
           <DataRow
             label="Contract"
-            value={`${globalDepositAddr.slice(0, 8)}...${globalDepositAddr.slice(-6)}`}
-            href={`${sourceChain?.blockExplorers?.default?.url ?? "https://sepolia.etherscan.io"}/address/${globalDepositAddr}`}
+            value={`${routerAddr.slice(0, 8)}...${routerAddr.slice(-6)}`}
+            href={`${sourceChain?.chain?.blockExplorers?.default?.url ?? "https://sepolia.etherscan.io"}/address/${routerAddr}`}
           />
         )}
       </div>

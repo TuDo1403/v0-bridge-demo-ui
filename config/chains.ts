@@ -5,7 +5,7 @@ import { type Chain } from "viem";
 /* ------------------------------------------------------------------ */
 
 export const SEPOLIA_RPC_URLS = [
-  "https://ethereum-sepolia-rpc.publicnode.com",
+  process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com",
   "https://rpc2.sepolia.org",
   "https://rpc.sepolia.org",
 ];
@@ -88,16 +88,31 @@ export const BRIDGE_ROUTES: BridgeRoute[] = [
     destChainId: riseTestnetChain.id,
     label: "Sepolia -> RISE Testnet",
   },
+  {
+    sourceChainId: riseTestnetChain.id,
+    destChainId: sepoliaChain.id,
+    label: "RISE Testnet -> Sepolia",
+  },
   // Extensible: add Arbitrum, Base, Optimism routes here
 ];
 
 export const SUPPORTED_CHAIN_IDS = Object.keys(CHAINS).map(Number);
 
+/** Convert a viem chain ID to a LayerZero EID. Falls back to chainId itself if unknown. */
+export function chainIdToEid(chainId: number): number {
+  return CHAINS[chainId]?.lzEid ?? chainId;
+}
+
+/** Resolve a LayerZero EID back to our ChainMeta. Returns undefined if unknown. */
+export function eidToChainMeta(eid: number): ChainMeta | undefined {
+  return Object.values(CHAINS).find((c) => c.lzEid === eid);
+}
+
 /* ------------------------------------------------------------------ */
 /*  LayerZero                                                          */
 /* ------------------------------------------------------------------ */
 
-export const LZ_SCAN_BASE = "https://testnet.layerzeroscan.com";
+export const LZ_SCAN_BASE = process.env.NEXT_PUBLIC_LZ_SCAN_BASE ?? "https://testnet.layerzeroscan.com";
 
 export function lzScanMessageUrl(srcEid: number, hash: string) {
   return `${LZ_SCAN_BASE}/tx/${hash}`;

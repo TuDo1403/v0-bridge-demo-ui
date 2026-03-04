@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { BridgePage } from "./bridge-page";
 
 export const metadata: Metadata = {
-  title: "Bridge | RISE Global Deposit",
-  description: "Bridge assets between Sepolia and RISE Testnet via LayerZero",
+  title: "Bridge | RISE Bridge",
+  description: "Deposit and withdraw assets between Ethereum and RISE Chain via LayerZero",
 };
 
 export default function Page() {

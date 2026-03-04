@@ -11,8 +11,8 @@ import {
 interface PhaseProgressBarProps<P extends string> {
   /** Ordered list of phase steps to display */
   steps: P[];
-  /** Current phase (or "failed" for error state) */
-  current: P | "failed";
+  /** Current phase (or "failed"/"recovered" for terminal states) */
+  current: P | "failed" | "recovered";
   /** Label for each phase shown in tooltip */
   labels: Record<P, string>;
 }
@@ -22,8 +22,10 @@ export function PhaseProgressBar<P extends string>({
   current,
   labels,
 }: PhaseProgressBarProps<P>) {
-  const idx = current === "failed" ? -1 : steps.indexOf(current as P);
+  const isTerminalSpecial = current === "failed" || current === "recovered";
+  const idx = isTerminalSpecial ? -1 : steps.indexOf(current as P);
   const isFailed = current === "failed";
+  const isRecovered = current === "recovered";
 
   return (
     <div className="flex items-center gap-0.5 w-full">
@@ -44,6 +46,7 @@ export function PhaseProgressBar<P extends string>({
                       isActive && isFailed && "bg-destructive",
                       !isPast && !isActive && "bg-muted",
                       isFailed && !isActive && "bg-muted",
+                      isRecovered && "bg-chart-4/30",
                     )}
                   />
                 </div>

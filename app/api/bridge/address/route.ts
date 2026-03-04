@@ -5,9 +5,9 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    const required = ["sourceChainId", "receiver"];
+    const required = ["srcEid", "dstEid", "srcAddr", "dstAddr", "dappId"];
     for (const field of required) {
-      if (!body[field]) {
+      if (body[field] === undefined || body[field] === null || body[field] === "") {
         return NextResponse.json(
           { error: `Missing required field: ${field}` },
           { status: 400 }
@@ -19,8 +19,11 @@ export async function POST(request: Request) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        sourceChainId: body.sourceChainId,
-        receiver: body.receiver,
+        srcEid: body.srcEid,
+        dstEid: body.dstEid,
+        srcAddr: body.srcAddr,
+        dstAddr: body.dstAddr,
+        dappId: body.dappId,
       }),
     });
   } catch (err) {

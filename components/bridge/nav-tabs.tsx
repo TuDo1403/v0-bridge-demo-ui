@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { ArrowLeftRight, Search, History } from "lucide-react";
+import { ArrowLeftRight, Search, History, ArrowDownToLine, BarChart3 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/bridge", label: "Bridge", icon: ArrowLeftRight },
   { href: "/track", label: "Track", icon: Search },
   { href: "/history", label: "History", icon: History },
+  { href: "/recover", label: "Recover", icon: ArrowDownToLine },
+  { href: "/stats", label: "Stats", icon: BarChart3 },
 ] as const;
 
 export function NavTabs() {

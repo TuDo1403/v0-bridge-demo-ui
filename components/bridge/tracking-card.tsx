@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Link from "next/link";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { retryBridgeJob, submitBridgeProcess } from "@/lib/bridge-service";
-import { mapBackendStatus, isComposeFailed } from "@/lib/types";
-import { CHAINS, LZ_SCAN_BASE } from "@/config/chains";
-import { TOKENS, buildComposeData, getTokenAddress } from "@/config/contracts";
+import { submitVaultFunded } from "@/lib/bridge-service";
+import { mapBackendStatus, isComposeFailed, isVaultRescueEligible, isComposeRescueNeeded } from "@/lib/types";
+import { CHAINS, chainIdToEid, LZ_SCAN_BASE } from "@/config/chains";
+import { TOKENS, getTokenAddress, KNOWN_DAPPS } from "@/config/contracts";
 import type { BridgeSession } from "@/lib/types";
 import { TxBadge } from "./tx-badge";
+import { RecoveryPanel } from "./recovery-panel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ChainIcon } from "./chain-icon";
@@ -15,12 +17,12 @@ import { AddressPill } from "./address-pill";
 import { PhaseProgressBar } from "./phase-progress-bar";
 import {
   ExternalLink,
-  Loader2,
   CheckCircle2,
   XCircle,
   AlertTriangle,
   Clock,
   ArrowRight,
+  ArrowDownToLine,
   RotateCcw,
   Layers,
   Zap,
@@ -40,15 +42,23 @@ type TrackingPhase =
   | "delivered"     // message delivered on dest
   | "verifying"     // compose executing / verifying
   | "complete"      // everything done
+  | "recovered"     // tokens rescued from vault (not bridged)
   | "failed";       // LZ or compose error
+
+/** Whether this session uses compose (dappId > 0, deposit-only) */
+function hasCompose(session: BridgeSession): boolean {
+  return (session.dappId ?? 0) > 0 && session.direction !== "withdraw";
+}
 
 function derivePhase(session: BridgeSession): TrackingPhase {
   const lz = session.lzTracking;
+  const needsCompose = hasCompose(session);
 
   // Check compose failure FIRST -- backend may report "completed" even when
   // lzCompose reverted on the destination chain.
-  if (isComposeFailed(session)) return "failed";
+  if (needsCompose && isComposeFailed(session)) return "failed";
 
+  if (session.status === "recovered") return "recovered";
   if (session.status === "completed") return "complete";
   if (session.status === "error" || session.status === "failed") return "failed";
   // Session was reset to idle but still has an error (e.g. after a failed retry)
@@ -65,9 +75,12 @@ function derivePhase(session: BridgeSession): TrackingPhase {
   }
   if (lz.lzStatus === "lz_failed" || lz.lzStatus === "lz_blocked" || lz.lzStatus === "failed") return "failed";
   if (lz.lzStatus === "lz_delivered" || lz.lzStatus === "completed") {
+    // Direct bridge (no compose) — delivery = complete
+    if (!needsCompose) return "complete";
     if (isComposeFailed(session)) return "failed";
-    const cs = lz.composeStatus?.toLowerCase() ?? "";
-    if (cs.includes("succeed") || cs === "executed" || cs === "completed") return "complete";
+    const cs = lz.composeStatus?.toUpperCase() ?? "";
+    if (cs === "SUCCEEDED" || cs === "EXECUTED" || cs === "COMPLETED") return "complete";
+    if (cs === "FAILED" || cs === "SIMULATION_REVERTED") return "failed";
     return "verifying";
   }
   if (lz.lzStatus === "lz_inflight" || lz.lzStatus === "lz_pending") return "inflight";
@@ -78,12 +91,20 @@ function derivePhase(session: BridgeSession): TrackingPhase {
 /*  Visual progress                                                     */
 /* ------------------------------------------------------------------ */
 
-const PHASE_STEPS: TrackingPhase[] = [
+const PHASE_STEPS_COMPOSE: TrackingPhase[] = [
   "waiting",
   "indexing",
   "inflight",
   "delivered",
   "verifying",
+  "complete",
+];
+
+const PHASE_STEPS_DIRECT: TrackingPhase[] = [
+  "waiting",
+  "indexing",
+  "inflight",
+  "delivered",
   "complete",
 ];
 
@@ -94,6 +115,7 @@ const PHASE_LABELS: Record<TrackingPhase, string> = {
   delivered: "Delivered",
   verifying: "Executing Compose",
   complete: "Complete",
+  recovered: "Recovered",
   failed: "Failed",
 };
 
@@ -109,6 +131,7 @@ function phaseColor(phase: TrackingPhase): string {
     case "delivered": return "text-primary";
     case "verifying": return "text-chart-4";
     case "complete": return "text-success";
+    case "recovered": return "text-chart-4";
     case "failed": return "text-destructive-foreground";
   }
 }
@@ -121,6 +144,7 @@ function phaseIcon(phase: TrackingPhase) {
     case "delivered": return <CheckCircle2 className="h-4 w-4" />;
     case "verifying": return <Layers className="h-4 w-4 animate-pulse" />;
     case "complete": return <CheckCircle2 className="h-4 w-4" />;
+    case "recovered": return <ArrowDownToLine className="h-4 w-4" />;
     case "failed": return <XCircle className="h-4 w-4" />;
   }
 }
@@ -194,23 +218,23 @@ function ComposeBadge({ status, txHash, explorerUrl }: {
 /*  Main tracking card                                                  */
 /* ------------------------------------------------------------------ */
 
-export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session: BridgeSession; feeBps?: bigint; dustRate?: bigint }) {
-  const { updateSession } = useBridgeStore();
+export function TrackingCard({ session }: { session: BridgeSession }) {
+  const { updateSession, setActiveSession } = useBridgeStore();
   const phase = derivePhase(session);
   const [expanded, setExpanded] = useState(phase === "failed");
   const [pollCount, setPollCount] = useState(0);
-  const [retrying, setRetrying] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
   const lz = session.lzTracking;
   const sourceChain = CHAINS[session.sourceChainId];
   const destChain = CHAINS[session.destChainId];
   const token = TOKENS[session.tokenKey];
-  const isTerminal = phase === "complete" || phase === "failed";
+  const isTerminal = phase === "complete" || phase === "failed" || phase === "recovered";
+  const phaseSteps = hasCompose(session) ? PHASE_STEPS_COMPOSE : PHASE_STEPS_DIRECT;
 
   // Pulse effect for active tracking
   const borderClass = cn(
     "rounded-lg border transition-all duration-500",
     phase === "complete" && "border-success/40 bg-success/5",
+    phase === "recovered" && "border-chart-4/40 bg-chart-4/5",
     phase === "failed" && "border-destructive/40 bg-destructive/5",
     !isTerminal && "border-primary/30 bg-primary/5",
   );
@@ -238,6 +262,12 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
             <span>{destChain?.shortLabel}</span>
             <span className="text-muted-foreground/30">|</span>
             <span>{session.amount} {token?.symbol}</span>
+            {session.bridgeMode === "self" && (
+              <>
+                <span className="text-muted-foreground/30">|</span>
+                <span className="text-chart-4">Self</span>
+              </>
+            )}
             {lz?.guid && (
               <>
                 <span className="text-muted-foreground/30">|</span>
@@ -250,9 +280,9 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
         </div>
 
         {/* LZ Scan link */}
-        {(session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash) && (
+        {(session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash) && (
           <a
-            href={`${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash}`}
+            href={`${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash}`}
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono text-primary hover:text-primary/80 bg-primary/10 transition-colors"
@@ -272,10 +302,44 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
         </button>
       </div>
 
+      {/* Bridge tx hashes (always visible) */}
+      {(session.selfBridgeTxHash || session.backendProcessTxHash) && (
+        <div className="px-4 pb-2 flex flex-wrap items-center gap-2">
+          {/* Fund Tx: only for vault-funded flows with a separate transfer */}
+          {session.userTransferTxHash && session.userTransferTxHash !== "permit2" &&
+           session.userTransferTxHash !== (session.selfBridgeTxHash || session.backendProcessTxHash) && (
+            <TxBadge
+              label="Fund Tx"
+              hash={session.userTransferTxHash}
+              explorerUrl={sourceChain?.explorerTxUrl(session.userTransferTxHash)}
+              className="!py-0.5 !text-[10px]"
+            />
+          )}
+          <TxBadge
+            label="Bridge Tx"
+            hash={(session.selfBridgeTxHash || session.backendProcessTxHash)!}
+            explorerUrl={sourceChain?.explorerTxUrl((session.selfBridgeTxHash || session.backendProcessTxHash)!)}
+            className="!py-0.5 !text-[10px]"
+          />
+        </div>
+      )}
+
       {/* Progress bar */}
       <div className="px-4 pb-3">
-        <PhaseProgressBar steps={PHASE_STEPS} current={phase} labels={PHASE_LABELS} />
+        <PhaseProgressBar steps={phaseSteps} current={phase} labels={PHASE_LABELS} />
       </div>
+
+      {/* Recovered banner */}
+      {phase === "recovered" && (
+        <div className="px-4 pb-3">
+          <div className="px-3 py-2 rounded bg-chart-4/10 border border-chart-4/20 text-[11px] font-mono text-chart-4 flex items-start gap-2">
+            <ArrowDownToLine className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <div>
+              Tokens were recovered from the vault back to your wallet. This session was not bridged.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error + retry: always visible for failed sessions */}
       {phase === "failed" && (
@@ -283,51 +347,12 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
           <div className="px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-[11px] font-mono text-destructive-foreground flex items-start gap-2">
             <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
             <div>
-              {isComposeFailed(session) && !session.error
+              {hasCompose(session) && isComposeFailed(session) && !session.error
                 ? "lzCompose failed on the destination chain. The compose execution reverted."
                 : (session.error ?? "The bridge transaction failed.")
               }
             </div>
           </div>
-          {session.jobId && (
-            <div className="flex flex-col gap-1.5">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={retrying}
-                className="font-mono text-xs gap-1.5 self-start border-destructive/30 hover:bg-destructive/10"
-                onClick={async () => {
-                  setRetrying(true);
-                  setRetryError(null);
-                  try {
-                    const composeData = buildComposeData(session, feeBps, dustRate);
-                    const res = await retryBridgeJob(session.jobId!, composeData);
-                    updateSession(session.id, {
-                      status: mapBackendStatus(res.status),
-                      error: undefined,
-                    });
-                  } catch (err) {
-                    const msg = err instanceof Error ? err.message : "Retry failed";
-                    setRetryError(msg);
-                  } finally {
-                    setRetrying(false);
-                  }
-                }}
-              >
-                {retrying ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <RotateCcw className="h-3 w-3" />
-                )}
-                {retrying ? "Retrying..." : "Retry Bridge"}
-              </Button>
-              {retryError && (
-                <span className="text-[10px] font-mono text-destructive-foreground px-1">
-                  {retryError}
-                </span>
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -339,21 +364,21 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
             <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
               Transactions
             </span>
+            {/* Fund Tx: only for vault-funded flows with a separate transfer */}
+            {session.userTransferTxHash && session.userTransferTxHash !== "permit2" &&
+             session.userTransferTxHash !== (session.selfBridgeTxHash || session.backendProcessTxHash) && (
+              <TxBadge
+                label="Fund Tx"
+                hash={session.userTransferTxHash}
+                explorerUrl={sourceChain?.explorerTxUrl(session.userTransferTxHash)}
+              />
+            )}
             <TxBadge
-              label="User Tx"
-              hash={session.userTransferTxHash}
+              label="Bridge Tx"
+              hash={session.selfBridgeTxHash || session.backendProcessTxHash}
               explorerUrl={
-                session.userTransferTxHash
-                  ? sourceChain?.explorerTxUrl(session.userTransferTxHash)
-                  : undefined
-              }
-            />
-            <TxBadge
-              label="Backend"
-              hash={session.backendProcessTxHash}
-              explorerUrl={
-                session.backendProcessTxHash
-                  ? sourceChain?.explorerTxUrl(session.backendProcessTxHash)
+                (session.selfBridgeTxHash || session.backendProcessTxHash)
+                  ? sourceChain?.explorerTxUrl((session.selfBridgeTxHash || session.backendProcessTxHash)!)
                   : undefined
               }
             />
@@ -361,8 +386,8 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
               label="LZ Msg"
               hash={lz?.guid ?? session.lzMessageId}
               explorerUrl={
-                (session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash)
-                  ? `${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || lz?.srcTxHash}`
+                (session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash)
+                  ? `${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash}`
                   : undefined
               }
             />
@@ -377,8 +402,8 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
             />
           </div>
 
-          {/* Compose info */}
-          {lz?.composeStatus && lz.composeStatus !== "UNKNOWN" && (
+          {/* Compose info — only for compose sessions (dappId > 0) */}
+          {hasCompose(session) && lz?.composeStatus && lz.composeStatus !== "UNKNOWN" && (
             <div className="flex flex-col gap-1.5">
               <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
                 Compose Execution
@@ -394,6 +419,46 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
               />
             </div>
           )}
+
+          {/* Addresses & Details */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+              Addresses & Details
+            </span>
+            <AddressPill label="From" address={session.userAddress} />
+            <AddressPill
+              label="To"
+              address={
+                session.recipientAddress === session.userAddress
+                  ? undefined
+                  : session.recipientAddress
+              }
+            />
+            {session.recipientAddress === session.userAddress && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">To</span>
+                <span className="text-[11px] font-mono text-muted-foreground italic">self</span>
+              </div>
+            )}
+            {session.depositAddress && (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <AddressPill label="Vault" address={session.depositAddress} />
+                <Link
+                  href={`/recover/${session.depositAddress}`}
+                  className="text-muted-foreground hover:text-primary transition-colors shrink-0"
+                  title="Recover tokens from vault"
+                >
+                  <ArrowDownToLine className="h-2.5 w-2.5" />
+                </Link>
+              </div>
+            )}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">Dapp</span>
+              <span className="text-[11px] font-mono text-foreground">
+                {KNOWN_DAPPS.find((d) => d.dappId === (session.dappId ?? 0))?.label ?? `#${session.dappId ?? 0}`}
+              </span>
+            </div>
+          </div>
 
           {/* EID info + addresses */}
           <div className="grid grid-cols-2 gap-2">
@@ -442,82 +507,84 @@ export function TrackingCard({ session, feeBps = 50n, dustRate = 1n }: { session
               <div className="px-3 py-2 rounded bg-warning/10 border border-warning/20 text-[11px] font-mono text-warning flex items-start gap-2">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-medium">Taking longer than expected.</span>{" "}
-                  You can nudge the backend to retry processing, or call{" "}
-                  <code className="text-foreground bg-muted/50 px-1 rounded">rescueFunds()</code> on
-                  the GlobalDeposit contract to recover your tokens.
+                  {session.selfBridgeTxHash ? (
+                    <>
+                      <span className="font-medium">Taking longer than expected.</span>{" "}
+                      LayerZero is still indexing your transaction. This usually takes 1-3 minutes.
+                      Check{" "}
+                      <a
+                        href={`${LZ_SCAN_BASE}/tx/${session.selfBridgeTxHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline text-primary"
+                      >
+                        LZ Scan
+                      </a>{" "}
+                      for the latest status.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium">Taking longer than expected.</span>{" "}
+                      You can nudge the backend to retry processing, or call{" "}
+                      <code className="text-foreground bg-muted/50 px-1 rounded">rescueFunds()</code> on
+                      the GlobalDeposit contract to recover your tokens.
+                    </>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={retrying}
-                  className="font-mono text-xs gap-1.5 border-warning/30 hover:bg-warning/10 text-warning"
-                  onClick={async () => {
-                    setRetrying(true);
-                    setRetryError(null);
-                    try {
-                      if (session.jobId) {
-                        // Job exists on backend -- retry it
-                        const composeData = buildComposeData(session, feeBps, dustRate);
-                        const res = await retryBridgeJob(session.jobId, composeData);
-                        updateSession(session.id, {
-                          status: mapBackendStatus(res.status),
-                          error: undefined,
-                        });
-                      } else if (session.userTransferTxHash) {
-                        // No job yet -- re-submit to process endpoint
-                        const composeData = buildComposeData(session, feeBps, dustRate);
+              {/* Re-submit button — only for operator-mode sessions without a job yet */}
+              {!session.selfBridgeTxHash && !session.jobId && session.userTransferTxHash && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="font-mono text-xs gap-1.5 border-warning/30 hover:bg-warning/10 text-warning"
+                    onClick={async () => {
+                      try {
                         const token = getTokenAddress(session.tokenKey, session.sourceChainId);
                         if (!token) throw new Error("Token address not found");
-                        const res = await submitBridgeProcess({
-                          sourceChainId: session.sourceChainId,
-                          destChainId: session.destChainId,
-                          userTransferTxHash: session.userTransferTxHash,
+                        const res = await submitVaultFunded({
+                          srcEid: chainIdToEid(session.sourceChainId),
+                          dstEid: chainIdToEid(session.destChainId),
+                          userTransferTxHash: session.userTransferTxHash!,
                           token,
-                          receiver: session.userAddress,
-                          composer: composeData.composer,
-                          composeMsg: composeData.composeMsg,
+                          receiver: session.recipientAddress ?? session.userAddress,
+                          dappId: session.dappId ?? 0,
                         });
-                        updateSession(session.id, {
+                        const updated: BridgeSession = {
+                          ...session,
                           status: mapBackendStatus(res.status),
                           jobId: res.jobId,
-                          backendProcessTxHash: res.backendProcessTxHash ?? undefined,
-                          composer: composeData.composer,
-                          composeMsg: composeData.composeMsg,
+                          error: undefined,
+                        };
+                        updateSession(session.id, {
+                          status: updated.status,
+                          jobId: updated.jobId,
                           error: undefined,
                         });
+                        // Re-select to trigger bridge-panel polling resume effect
+                        setActiveSession(updated);
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Submit failed";
+                        updateSession(session.id, { error: msg });
                       }
-                    } catch (err) {
-                      const msg = err instanceof Error ? err.message : "Nudge failed";
-                      setRetryError(msg);
-                    } finally {
-                      setRetrying(false);
-                    }
-                  }}
-                >
-                  {retrying ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
+                    }}
+                  >
                     <RotateCcw className="h-3 w-3" />
-                  )}
-                  {retrying
-                    ? session.jobId ? "Retrying..." : "Submitting..."
-                    : session.jobId ? "Retry Backend" : "Submit to Backend"
-                  }
-                </Button>
-                {retryError && (
-                  <span className="text-[10px] font-mono text-destructive-foreground">
-                    {retryError}
-                  </span>
-                )}
-              </div>
+                    Submit to Backend
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
           {/* (Error + retry is shown above the expanded panel, always visible) */}
         </div>
+      )}
+
+      {/* Recovery panel — shown inline when eligible */}
+      {expanded && (isVaultRescueEligible(session) || isComposeRescueNeeded(session)) && (
+        <RecoveryPanel session={session} />
       )}
     </div>
   );

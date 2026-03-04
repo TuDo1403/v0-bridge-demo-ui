@@ -19,7 +19,7 @@ export function BridgeHeader() {
           </div>
           <div className="flex flex-col min-w-0">
             <h1 className="text-xs sm:text-sm font-mono font-bold text-foreground tracking-tight">
-              <span className="hidden sm:inline">RISE Global Deposit Bridge</span>
+              <span className="hidden sm:inline">RISE Bridge</span>
               <span className="sm:hidden">RISE Bridge</span>
             </h1>
             <span className="text-[10px] font-mono text-muted-foreground">

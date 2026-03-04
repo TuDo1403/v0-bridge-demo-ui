@@ -16,6 +16,7 @@ export type BridgeStatus =
   | "lz_pending"
   | "destination_confirmed"
   | "completed"
+  | "recovered"
   | "failed"
   | "error";
 
@@ -33,6 +34,7 @@ export const STATUS_LABELS: Record<BridgeStatus, string> = {
   lz_pending: "LZ Pending",
   destination_confirmed: "Destination Confirmed",
   completed: "Completed",
+  recovered: "Recovered",
   failed: "Failed",
   error: "Error",
 };
@@ -52,72 +54,102 @@ export const STATUS_ORDER: BridgeStatus[] = [
   "completed",
 ];
 
-/** Map backend job status to our BridgeStatus */
+/** Map backend job status to our BridgeStatus.
+ *  Backend "completed" = source-chain event confirmed (operator TX mined).
+ *  Real completion depends on LZ delivery (+ compose for dapp bridges),
+ *  so we map it to "bridge_mined" and let LZ polling drive the rest. */
 export function mapBackendStatus(backendStatus: string): BridgeStatus {
   const map: Record<string, BridgeStatus> = {
-    source_verified: "source_verified",
-    bridge_submitted: "bridge_submitted",
-    bridge_mined: "bridge_mined",
-    lz_indexing: "lz_indexing",
-    lz_pending: "lz_pending",
-    completed: "completed",
+    pending: "bridge_submitted",
+    submitted: "bridge_mined",
+    completed: "bridge_mined",
     failed: "failed",
   };
-  return map[backendStatus] ?? "error";
+  return map[backendStatus] ?? "bridge_submitted";
 }
 
 /* ------------------------------------------------------------------ */
 /*  API types                                                          */
 /* ------------------------------------------------------------------ */
 
-/* -- Request to our Next.js proxy (client -> proxy) -- */
-export interface BridgeProcessRequest {
-  sourceChainId: number;
-  destChainId: number;
+/* -- Request: vault-funded flow (user already transferred tokens to vault) -- */
+export interface VaultFundedRequest {
+  srcEid: number;
+  dstEid: number;
   userTransferTxHash: string;
-  token: string;           // token contract address on source chain
-  receiver: string;        // user's receiving address on dest chain
-  composer: string;        // composer contract address (allowlisted)
-  composeMsg: string;      // hex-encoded compose message
+  token: string;
+  receiver: string;
+  dappId: number;
 }
 
-/* -- Response from our Next.js proxy after POST /v1/bridge/process -- */
+/* -- Request: permit2 flow (user signed an EIP-712 permit) -- */
+export interface PermitProcessRequest {
+  srcEid: number;
+  dstEid: number;
+  token: string;
+  sender: string;
+  receiver: string;
+  amount: string;
+  dappId: number;
+  permit: {
+    deadline: string;
+    nonce: string;
+    signature: string;
+  };
+}
+
+/* -- Response from POST /v1/bridge/process/vault-funded or /permit -- */
 export interface BridgeProcessResponse {
   jobId: string;
   status: string;
-  depositAddress: string;
-  backendProcessTxHash: string | null;
+}
+
+/* -- Lightweight tx hash pair returned by history & status-tx endpoints -- */
+export interface TxHashPair {
+  vault_fund_tx_hash: string | null;
+  bridge_tx_hash: string;
+}
+
+/* -- Paginated history response -- */
+export interface HistoryResponse {
+  items: TxHashPair[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/* -- Transaction info within a status response -- */
+export interface TransactionInfo {
+  txType: "user_fund" | "operator_bridge";
+  eid: number;
+  txHash: string;
+  status: string;
+  operatorAddress?: string;
 }
 
 /* -- Response from GET /v1/bridge/status/{jobId} -- */
 export interface BridgeStatusResponse {
   jobId: string;
   status: BackendJobStatus;
-  userTransferTxHash: string;
-  backendProcessTxHash: string | null;
-  lzMessageId: string | null;
-  destinationTxHash: string | null;
-  composeStatus: string | null;
-  composeTxHash: string | null;
-  sender: string | null;
+  direction: string;
+  sender: string;
   receiver: string;
   token: string;
   amount: string;
   feeAmount: string | null;
   netAmount: string | null;
-  sourceChainId: number;
-  dstChainId: number;
+  srcEid: number;
+  dstEid: number;
+  dappId: number;
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  transactions: TransactionInfo[];
 }
 
 export type BackendJobStatus =
-  | "source_verified"
-  | "bridge_submitted"
-  | "bridge_mined"
-  | "lz_indexing"
-  | "lz_pending"
+  | "pending"
+  | "submitted"
   | "completed"
   | "failed";
 
@@ -149,8 +181,20 @@ export interface BridgeSession {
   tokenKey: string;
   amount: string;
   userAddress: string;
+  /** Recipient address on destination chain (defaults to userAddress for self-bridge) */
+  recipientAddress: string;
   depositAddress: string;
   status: BridgeStatus;
+  /** Bridge direction: deposit (Home→Remote) or withdraw (Remote→Home) */
+  direction?: "deposit" | "withdraw";
+  /** Dapp ID for compose routing (0 = direct bridge, deposit-only) */
+  dappId?: number;
+  /** Bridge mode: operator-sponsored or self-bridge */
+  bridgeMode?: "operator" | "self";
+  /** Transfer mode: vault-funded or permit2 */
+  transferMode?: "vault" | "permit2";
+  /** Self-bridge tx hash (deposit()/withdraw() call) */
+  selfBridgeTxHash?: string;
   userTransferTxHash?: string;
   jobId?: string;
   backendProcessTxHash?: string;
@@ -158,10 +202,6 @@ export interface BridgeSession {
   lzTxHash?: string;
   destinationTxHash?: string;
   error?: string;
-  /** Composer contract address (needed for retry if backend lost it) */
-  composer?: string;
-  /** Hex-encoded compose message (needed for retry if backend lost it) */
-  composeMsg?: string;
   /** LayerZero tracking data merged from LZ Scan API */
   lzTracking?: LzTrackingSnapshot;
 }
@@ -179,6 +219,32 @@ export function isComposeFailed(session: {
   if (cs.includes("fail") || cs.includes("revert")) return true;
   if (session.error?.toLowerCase().includes("compose")) return true;
   return false;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Recovery eligibility helpers                                       */
+/* ------------------------------------------------------------------ */
+
+/** Session is eligible for vault rescue (tokens stuck in source-chain vault) */
+export function isVaultRescueEligible(session: BridgeSession): boolean {
+  if (!session.depositAddress) return false;
+  // Must not have been successfully bridged
+  if (session.selfBridgeTxHash) return false;
+  if (session.backendProcessTxHash) return false;
+  // Must have actually transferred tokens to the vault
+  if (!session.userTransferTxHash) return false;
+  // Status indicates stuck state
+  const stuckStatuses: BridgeStatus[] = [
+    "transfer_mined", "deposit_verified", "failed", "error",
+  ];
+  return stuckStatuses.includes(session.status);
+}
+
+/** Session has a compose failure (tokens stuck in RISExComposer on dest chain) */
+export function isComposeRescueNeeded(session: BridgeSession): boolean {
+  if ((session.dappId ?? 0) === 0) return false;    // direct bridge, no compose
+  if (session.direction === "withdraw") return false; // withdraw has no compose
+  return isComposeFailed(session);
 }
 
 /* ------------------------------------------------------------------ */

@@ -2,7 +2,11 @@ export const riseGlobalDepositAbi = [
   {
     type: "function",
     name: "computeDepositAddress",
-    inputs: [{ name: "recipient", type: "address" }],
+    inputs: [
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+      { name: "dappId", type: "uint16" },
+    ],
     outputs: [{ name: "depositAddress", type: "address" }],
     stateMutability: "view",
   },
@@ -76,6 +80,16 @@ export const riseGlobalDepositAbi = [
   },
   {
     type: "function",
+    name: "getTokenFeeConfig",
+    inputs: [{ name: "token", type: "address" }],
+    outputs: [
+      { name: "mode", type: "uint8" },
+      { name: "flatFee", type: "uint64" },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
     name: "getDstEid",
     inputs: [],
     outputs: [{ name: "dstEid", type: "uint32" }],
@@ -90,13 +104,148 @@ export const riseGlobalDepositAbi = [
   },
   {
     type: "function",
+    name: "getDapp",
+    inputs: [{ name: "dappId", type: "uint16" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "vaultImpl", type: "address" },
+          { name: "composer", type: "address" },
+          { name: "lzComposeGas", type: "uint40" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getVaultImpl",
+    inputs: [{ name: "dappId", type: "uint16" }],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "isDappTokenSupported",
+    inputs: [
+      { name: "dappId", type: "uint16" },
+      { name: "token", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getSrcEid",
+    inputs: [],
+    outputs: [{ name: "", type: "uint32" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "buildComposeMsg",
+    inputs: [
+      { name: "dappId", type: "uint16" },
+      { name: "dstAddress", type: "address" },
+      { name: "srcToken", type: "address" },
+      { name: "bridgeAmount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bytes" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "deposit",
+    inputs: [
+      {
+        name: "param",
+        type: "tuple",
+        components: [
+          { name: "srcAddress", type: "address" },
+          { name: "dstAddress", type: "address" },
+          { name: "amount", type: "uint256" },
+          { name: "composeMsg", type: "bytes" },
+          { name: "nativeFee", type: "uint256" },
+          {
+            name: "permit",
+            type: "tuple",
+            components: [
+              { name: "permitType", type: "uint8" },
+              { name: "deadline", type: "uint256" },
+              { name: "nonce", type: "uint256" },
+              { name: "signature", type: "bytes" },
+            ],
+          },
+        ],
+      },
+      { name: "token", type: "address" },
+      { name: "dappId", type: "uint16" },
+    ],
+    outputs: [],
+    stateMutability: "payable",
+  },
+  {
+    type: "function",
+    name: "quote",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "dappId", type: "uint16" },
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+      { name: "composeMsg", type: "bytes" },
+    ],
+    outputs: [
+      { name: "protocolFee", type: "uint256" },
+      {
+        name: "lzFee",
+        type: "tuple",
+        components: [
+          { name: "nativeFee", type: "uint256" },
+          { name: "lzTokenFee", type: "uint256" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
     name: "rescueFunds",
     inputs: [
-      { name: "recipient", type: "address" },
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+      { name: "dappId", type: "uint16" },
       { name: "token", type: "address" },
     ],
     outputs: [],
     stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "rescueETH",
+    inputs: [
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+      { name: "dappId", type: "uint16" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "isBlocked",
+    inputs: [{ name: "sender", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "isFeeAllowlisted",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
   },
   {
     type: "event",
@@ -119,6 +268,218 @@ export const riseGlobalDepositAbi = [
     ],
   },
   { type: "error", name: "ZeroBridgeAmount", inputs: [] },
+] as const;
+
+/** ABI for RiseGlobalWithdraw contract */
+export const riseGlobalWithdrawAbi = [
+  {
+    type: "function",
+    name: "computeDepositAddress",
+    inputs: [
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+      { name: "dstEid", type: "uint32" },
+    ],
+    outputs: [{ name: "depositAddress", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getTokenConfig",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "dstEid", type: "uint32" },
+    ],
+    outputs: [
+      {
+        name: "config",
+        type: "tuple",
+        components: [
+          { name: "oft", type: "address" },
+          { name: "enabled", type: "bool" },
+          { name: "lzReceiveGas", type: "uint128" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getFeeConfig",
+    inputs: [],
+    outputs: [
+      { name: "feeBps", type: "uint16" },
+      { name: "feeCollector", type: "address" },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getTokenFeeConfig",
+    inputs: [{ name: "token", type: "address" }],
+    outputs: [
+      { name: "mode", type: "uint8" },
+      { name: "flatFee", type: "uint64" },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getRateLimitBucket",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "dstEid", type: "uint32" },
+    ],
+    outputs: [
+      {
+        name: "bucket",
+        type: "tuple",
+        components: [
+          { name: "lastBlock", type: "uint64" },
+          { name: "available", type: "uint128" },
+          { name: "capacity", type: "uint128" },
+          { name: "refillPerBlock", type: "uint128" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getLaneRateLimitBucket",
+    inputs: [{ name: "dstEid", type: "uint32" }],
+    outputs: [
+      {
+        name: "bucket",
+        type: "tuple",
+        components: [
+          { name: "lastBlock", type: "uint64" },
+          { name: "available", type: "uint128" },
+          { name: "capacity", type: "uint128" },
+          { name: "refillPerBlock", type: "uint128" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "isLanePaused",
+    inputs: [{ name: "dstEid", type: "uint32" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getLanes",
+    inputs: [],
+    outputs: [{ name: "", type: "uint32[]" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getVaultImplementation",
+    inputs: [{ name: "dstEid", type: "uint32" }],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getSrcEid",
+    inputs: [],
+    outputs: [{ name: "", type: "uint32" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "withdraw",
+    inputs: [
+      {
+        name: "param",
+        type: "tuple",
+        components: [
+          { name: "srcAddress", type: "address" },
+          { name: "dstAddress", type: "address" },
+          { name: "amount", type: "uint256" },
+          { name: "nativeFee", type: "uint256" },
+          {
+            name: "permit",
+            type: "tuple",
+            components: [
+              { name: "permitType", type: "uint8" },
+              { name: "deadline", type: "uint256" },
+              { name: "nonce", type: "uint256" },
+              { name: "signature", type: "bytes" },
+            ],
+          },
+        ],
+      },
+      { name: "token", type: "address" },
+      { name: "dstEid", type: "uint32" },
+    ],
+    outputs: [],
+    stateMutability: "payable",
+  },
+  {
+    type: "function",
+    name: "quote",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "dstEid", type: "uint32" },
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+    ],
+    outputs: [
+      { name: "protocolFee", type: "uint256" },
+      {
+        name: "lzFee",
+        type: "tuple",
+        components: [
+          { name: "nativeFee", type: "uint256" },
+          { name: "lzTokenFee", type: "uint256" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "isBlocked",
+    inputs: [{ name: "sender", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "isFeeAllowlisted",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "rescueFunds",
+    inputs: [
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+      { name: "dstEid", type: "uint32" },
+      { name: "token", type: "address" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "rescueETH",
+    inputs: [
+      { name: "srcAddress", type: "address" },
+      { name: "dstAddress", type: "address" },
+      { name: "dstEid", type: "uint32" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
 ] as const;
 
 /** Minimal ABI for OFT conversion rate query */
@@ -182,6 +543,100 @@ export const erc20Abi = [
     name: "symbol",
     inputs: [],
     outputs: [{ name: "", type: "string" }],
+    stateMutability: "view",
+  },
+] as const;
+
+/** ABI for RiseVault clone — direct recovery via Lifebuoy rescue functions */
+export const riseVaultAbi = [
+  {
+    type: "function",
+    name: "rescueERC20",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "payable",
+  },
+  {
+    type: "function",
+    name: "rescueETH",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "payable",
+  },
+  {
+    type: "function",
+    name: "isOwner",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getSrcAddress",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getDstAddress",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getFactory",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getSrcEid",
+    inputs: [],
+    outputs: [{ name: "", type: "uint32" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getDstEid",
+    inputs: [],
+    outputs: [{ name: "", type: "uint32" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getDappId",
+    inputs: [],
+    outputs: [{ name: "", type: "uint16" }],
+    stateMutability: "view",
+  },
+] as const;
+
+/** ABI for RISExComposer (dest chain compose recovery + token check) */
+export const riseXComposerAbi = [
+  {
+    type: "function",
+    name: "claimFunds",
+    inputs: [
+      { name: "token", type: "address" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "isProtectedToken",
+    inputs: [{ name: "token", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
     stateMutability: "view",
   },
 ] as const;

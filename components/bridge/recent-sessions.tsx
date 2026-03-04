@@ -2,16 +2,17 @@
 
 import { useState } from "react";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { retryBridgeJob } from "@/lib/bridge-service";
-import { STATUS_LABELS, mapBackendStatus, isComposeFailed, type BridgeSession, type BridgeStatus } from "@/lib/types";
+import { STATUS_LABELS, mapBackendStatus, isComposeFailed, isVaultRescueEligible, isComposeRescueNeeded, type BridgeSession, type BridgeStatus } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
-import { TOKENS, buildComposeData } from "@/config/contracts";
+import { TOKENS } from "@/config/contracts";
 import { cn } from "@/lib/utils";
 import { ChainIcon } from "./chain-icon";
 import { Button } from "@/components/ui/button";
 import {
   Clock,
   ArrowRight,
+  ArrowUpRight,
+  ArrowDownLeft,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -19,6 +20,8 @@ import {
   Radio,
   X,
   RotateCcw,
+  AlertTriangle,
+  ShieldAlert,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -31,6 +34,8 @@ function sessionIndicator(session: BridgeSession) {
 
   if (s === "completed")
     return { icon: <CheckCircle2 className="h-3 w-3" />, color: "text-success" };
+  if (s === "recovered")
+    return { icon: <ArrowDownLeft className="h-3 w-3" />, color: "text-chart-4" };
   if (s === "error" || s === "failed")
     return { icon: <XCircle className="h-3 w-3" />, color: "text-destructive-foreground" };
 
@@ -74,37 +79,15 @@ function SessionRow({
   const token = TOKENS[session.tokenKey];
   const timeAgo = getTimeAgo(session.createdAt);
   const { icon, color } = sessionIndicator(session);
-  const [retrying, setRetrying] = useState(false);
 
   const composeFailed = isComposeFailed(session);
   const isFailed = session.status === "error" || session.status === "failed" || composeFailed;
-  const isTerminal = session.status === "completed" || isFailed;
+  const isRecovered = session.status === "recovered";
+  const isTerminal = session.status === "completed" || isRecovered || isFailed;
 
   // Phantom = awaiting_transfer without a tx hash (user never actually sent)
   const isPhantom =
     session.status === "awaiting_transfer" && !session.userTransferTxHash;
-
-  const handleRetryClick = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!session.jobId || retrying) return;
-    setRetrying(true);
-    try {
-      const composeData = buildComposeData(session);
-      const res = await retryBridgeJob(session.jobId, composeData);
-      updateSession(session.id, {
-        status: mapBackendStatus(res.status),
-        error: undefined,
-      });
-      // Select the session so bridge panel shows the polling view
-      setActiveSession({ ...session, status: mapBackendStatus(res.status), error: undefined });
-    } catch (err) {
-      updateSession(session.id, {
-        error: err instanceof Error ? err.message : "Retry failed",
-      });
-    } finally {
-      setRetrying(false);
-    }
-  };
 
   return (
     <div className="flex flex-col gap-1">
@@ -126,6 +109,13 @@ function SessionRow({
       >
         <div className={cn("shrink-0", color)}>{icon}</div>
 
+        {/* Direction arrow */}
+        {session.direction === "withdraw" ? (
+          <span title="Withdrawal"><ArrowDownLeft className="h-3 w-3 text-chart-5 shrink-0" /></span>
+        ) : (
+          <span title="Deposit"><ArrowUpRight className="h-3 w-3 text-primary shrink-0" /></span>
+        )}
+
         <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground min-w-0">
           <ChainIcon chainKey={CHAINS[session.sourceChainId]?.iconKey} className="h-3 w-3 shrink-0" />
           <span>{sourceLabel}</span>
@@ -142,6 +132,7 @@ function SessionRow({
           className={cn(
             "text-[9px] font-mono px-1.5 py-0.5 rounded ml-auto shrink-0 whitespace-nowrap",
             session.status === "completed" && "bg-success/15 text-success",
+            isRecovered && "bg-chart-4/15 text-chart-4",
             isFailed && "bg-destructive/15 text-destructive-foreground",
             !isTerminal && "bg-primary/15 text-primary"
           )}
@@ -150,6 +141,18 @@ function SessionRow({
             ? session.lzTracking.lzStatus.replace("lz_", "").toUpperCase()
             : STATUS_LABELS[session.status]}
         </span>
+
+        {/* Recovery eligibility indicators */}
+        {isVaultRescueEligible(session) && (
+          <span className="shrink-0" title="Vault recovery available">
+            <AlertTriangle className="h-3 w-3 text-chart-4" />
+          </span>
+        )}
+        {isComposeRescueNeeded(session) && (
+          <span className="shrink-0" title="Compose recovery needed">
+            <ShieldAlert className="h-3 w-3 text-chart-4" />
+          </span>
+        )}
 
         <span className="text-[9px] text-muted-foreground/50 font-mono shrink-0 hidden sm:block">
           {timeAgo}
@@ -172,24 +175,6 @@ function SessionRow({
           </span>
         )}
       </button>
-
-      {/* Retry button for failed sessions with a jobId */}
-      {isFailed && session.jobId && isActive && (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={retrying}
-          onClick={handleRetryClick}
-          className="mx-3 mb-1 h-8 font-mono text-[10px] gap-1.5 border-destructive/30 hover:bg-destructive/10 text-destructive-foreground"
-        >
-          {retrying ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <RotateCcw className="h-3 w-3" />
-          )}
-          {retrying ? "Retrying..." : "Retry Bridge Job"}
-        </Button>
-      )}
 
       {/* Retry processing for failed sessions without jobId but with tx hash */}
       {isFailed && !session.jobId && session.userTransferTxHash && isActive && (

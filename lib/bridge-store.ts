@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { BridgeSession, BridgeStatus } from "./types";
 import { BRIDGE_ROUTES } from "@/config/chains";
+import { getBridgeDirection, type BridgeDirection, type BridgeMode, type TransferMode } from "@/config/contracts";
 
 /* ------------------------------------------------------------------ */
 /*  LocalStorage helpers                                               */
@@ -40,6 +41,16 @@ interface BridgeStore {
   tokenKey: string;
   amount: string;
   depositAddress: string;
+  /** Bridge direction derived from source chain */
+  direction: BridgeDirection;
+  /** Dapp ID for compose routing (deposit-only, 0 = direct bridge) */
+  dappId: number;
+  /** Custom recipient address (empty = self-bridge using connected wallet) */
+  recipientAddress: string;
+  /** Who pays LZ cross-chain gas: operator (backend) or self (user) */
+  bridgeMode: BridgeMode;
+  /** How tokens move: vault (ERC20 transfer) or permit2 (signature) */
+  transferMode: TransferMode;
 
   // Active session
   activeSession: BridgeSession | null;
@@ -53,10 +64,18 @@ interface BridgeStore {
   setTokenKey: (key: string) => void;
   setAmount: (amount: string) => void;
   setDepositAddress: (addr: string) => void;
+  setDappId: (id: number) => void;
+  setRecipientAddress: (addr: string) => void;
+  setBridgeMode: (mode: BridgeMode) => void;
+  setTransferMode: (mode: TransferMode) => void;
+
+  /** Swap source and destination chains */
+  swapDirection: () => void;
 
   // Session management
   createSession: (params: {
     userAddress: string;
+    recipientAddress: string;
     depositAddress: string;
   }) => BridgeSession;
   updateSession: (id: string, updates: Partial<BridgeSession>) => void;
@@ -76,6 +95,11 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   tokenKey: "USDC",
   amount: "",
   depositAddress: "",
+  direction: "deposit",
+  dappId: 0,
+  recipientAddress: "",
+  bridgeMode: "operator",
+  transferMode: "vault",
 
   activeSession: null,
   sessionSelectedAt: 0,
@@ -86,8 +110,24 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   setTokenKey: (key) => set({ tokenKey: key }),
   setAmount: (amount) => set({ amount }),
   setDepositAddress: (addr) => set({ depositAddress: addr }),
+  setDappId: (id) => set({ dappId: id, depositAddress: "" }),
+  setRecipientAddress: (addr) => set({ recipientAddress: addr, depositAddress: "" }),
+  setBridgeMode: (mode) => set({ bridgeMode: mode }),
+  setTransferMode: (mode) => set({ transferMode: mode }),
 
-  createSession: ({ userAddress, depositAddress }) => {
+  swapDirection: () => {
+    const { sourceChainId, destChainId } = get();
+    const newDirection: BridgeDirection = sourceChainId === 11155111 ? "withdraw" : "deposit";
+    set({
+      sourceChainId: destChainId,
+      destChainId: sourceChainId,
+      direction: newDirection,
+      depositAddress: "", // reset since address changes per direction
+      dappId: 0, // reset dapp on direction swap
+    });
+  },
+
+  createSession: ({ userAddress, recipientAddress, depositAddress }) => {
     const state = get();
     const session: BridgeSession = {
       id: `ses_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -97,8 +137,13 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
       tokenKey: state.tokenKey,
       amount: state.amount,
       userAddress,
+      recipientAddress,
       depositAddress,
       status: "awaiting_transfer" as BridgeStatus,
+      direction: state.direction,
+      dappId: state.dappId,
+      bridgeMode: state.bridgeMode,
+      transferMode: state.transferMode,
     };
 
     const sessions = [...get().recentSessions, session];
@@ -109,7 +154,13 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   },
 
   updateSession: (id, updates) => {
-    const sessions = get().recentSessions.map((s) => {
+    // Ensure sessions are loaded from localStorage first (guards against race condition
+    // where updateSession is called before loadRecentSessions effect runs)
+    let current = get().recentSessions;
+    if (current.length === 0) {
+      current = loadSessions();
+    }
+    const sessions = current.map((s) => {
       if (s.id !== id) return s;
       // Deep-merge lzTracking so we never lose fields
       const merged = { ...s, ...updates };
@@ -132,7 +183,27 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
     set({ recentSessions: sessions, activeSession: updatedActive });
   },
 
-  setActiveSession: (session) => set({ activeSession: session, sessionSelectedAt: Date.now() }),
+  setActiveSession: (session) => {
+    if (session) {
+      // Restore form fields from the session so hooks (quote, compose, etc.) work correctly
+      set({
+        activeSession: session,
+        sessionSelectedAt: Date.now(),
+        sourceChainId: session.sourceChainId,
+        destChainId: session.destChainId,
+        tokenKey: session.tokenKey,
+        amount: session.amount,
+        depositAddress: session.depositAddress,
+        direction: session.direction ?? getBridgeDirection(session.sourceChainId),
+        dappId: session.dappId ?? 0,
+        recipientAddress: session.recipientAddress ?? "",
+        bridgeMode: session.bridgeMode ?? "operator",
+        transferMode: session.transferMode ?? "vault",
+      });
+    } else {
+      set({ activeSession: null, sessionSelectedAt: Date.now() });
+    }
+  },
 
   loadRecentSessions: () => {
     const sessions = loadSessions();
@@ -152,6 +223,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   resetForm: () =>
     set({
       amount: "",
+      recipientAddress: "",
       activeSession: null,
     }),
 }));
