@@ -62,8 +62,9 @@ export function useDepositAddress({
         srcAddr: address,
         dstAddr: recipient,
         dappId: effectiveDappId,
+        direction,
       });
-      setDepositAddress(result.depositAddress as Address);
+      setDepositAddress(result.address as Address);
     } catch {
       setIsError(true);
     } finally {
@@ -89,9 +90,11 @@ export function useDepositAddress({
           srcAddr: address,
           dstAddr: recipient,
           dappId: effectiveDappId,
+          direction,
         });
+
         if (!cancelled) {
-          setDepositAddress(result.depositAddress as Address);
+          setDepositAddress(result.address as Address);
         }
       } catch {
         if (!cancelled) setIsError(true);

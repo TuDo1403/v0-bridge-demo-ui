@@ -5,7 +5,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    const required = ["srcEid", "dstEid", "srcAddr", "dstAddr", "dappId"];
+    const required = ["srcEid", "dstEid", "srcAddr", "dstAddr", "dappId", "direction"];
     for (const field of required) {
       if (body[field] === undefined || body[field] === null || body[field] === "") {
         return NextResponse.json(
@@ -24,6 +24,7 @@ export async function POST(request: Request) {
         srcAddr: body.srcAddr,
         dstAddr: body.dstAddr,
         dappId: body.dappId,
+        direction: body.direction,
       }),
     });
   } catch (err) {

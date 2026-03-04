@@ -122,7 +122,8 @@ export async function getDepositAddress(params: {
   srcAddr: string;
   dstAddr: string;
   dappId: number;
-}): Promise<{ depositAddress: string }> {
+  direction: string;
+}): Promise<{ address: string }> {
   const res = await fetch(`${API_BASE}/address`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
