@@ -605,18 +605,12 @@ export function BridgePanel() {
       updateSession(activeSession.id, { status: "deposit_verified" });
     }
 
-    // Self-bridge mode: user will call deposit()/withdraw() themselves — don't submit to backend.
-    // Read fresh session from store as belt-and-suspenders against stale closures
-    // (the isTxMinedRaw effect that calls handlePostMine omits it from deps).
-    const freshSession = useBridgeStore.getState().activeSession;
-    if (activeSession.bridgeMode === "self" || freshSession?.bridgeMode === "self") {
-      return;
-    }
-
-    // Use session data, not store data — session dappId is stable
+    // Vault is always known (saved by getDepositAddress), so the block poller will
+    // auto-create a job and the operator will bridge it — regardless of bridgeMode.
+    // Always go through submitVaultFunded: it returns the existing job if the block
+    // poller already created one, or creates a new one otherwise.
     const sessionDappId = activeSession.dappId ?? 0;
 
-    // Submit to real bridge API
     try {
       const res = await submitVaultFunded({
         srcEid: chainIdToEid(activeSession.sourceChainId),
@@ -1051,13 +1045,9 @@ export function BridgePanel() {
         status: "transfer_mined",
       });
 
-      // For self-bridge: just set the hash, user will click "Complete Bridge"
-      if (activeSession.bridgeMode === "self") {
-        setIsSubmittingManual(false);
-        return;
-      }
-
-      // 4. Operator mode: submit to backend
+      // Check if a job already exists (block poller may have auto-created it)
+      // Vault is always known — operator will auto-bridge. Submit to backend
+      // regardless of bridgeMode (returns existing job if block poller already created one).
       const sessionDappId = activeSession.dappId ?? 0;
 
       const res = await submitVaultFunded({

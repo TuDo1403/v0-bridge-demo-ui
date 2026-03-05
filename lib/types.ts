@@ -108,6 +108,8 @@ export interface BridgeProcessResponse {
 export interface TxHashPair {
   vault_fund_tx_hash: string | null;
   bridge_tx_hash: string;
+  job_id?: string;   // set when matched from job_requests
+  status?: string;   // set when matched from job_requests
 }
 
 /* -- Paginated history response -- */
