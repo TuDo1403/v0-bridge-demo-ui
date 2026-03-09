@@ -14,7 +14,7 @@ import {
   getCreate2Address,
 } from "viem";
 import { CHAINS } from "@/config/chains";
-import { CONTRACTS } from "@/config/contracts";
+import { CONTRACTS, getBridgeDirection } from "@/config/contracts";
 
 /**
  * Mirrors Solidity: EfficientHashLib.hash(bytes32(srcEid), bytes32(dstEid), bytes32(dappId), bytes32(srcAddress), bytes32(dstAddress))
@@ -101,7 +101,7 @@ export function computeDepositVaultAddress(params: {
     throw new Error(`Unknown chain: src=${sourceChainId} dst=${destChainId}`);
   }
 
-  const isDeposit = sourceChainId !== 11155931; // RISE chain = withdrawal source
+  const isDeposit = getBridgeDirection(sourceChainId) === "deposit";
   const deployer = isDeposit
     ? CONTRACTS[sourceChainId]?.globalDeposit
     : CONTRACTS[sourceChainId]?.globalWithdraw;

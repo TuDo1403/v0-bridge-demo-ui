@@ -64,8 +64,9 @@ export type TimeRange = "24h" | "7d" | "30d" | "all";
 
 export async function fetchStatsSummary(
   range_: TimeRange = "all",
+  network: "mainnet" | "testnet" = "mainnet",
 ): Promise<StatsSummary> {
-  const res = await fetch(`${API_BASE}/summary?range=${range_}`);
+  const res = await fetch(`${API_BASE}/summary?range=${range_}&net=${network}`);
   if (!res.ok) throw new Error("Failed to fetch stats summary");
   return res.json();
 }
@@ -73,9 +74,10 @@ export async function fetchStatsSummary(
 export async function fetchStatsVolume(
   range_: TimeRange = "30d",
   groupBy = "day",
+  network: "mainnet" | "testnet" = "mainnet",
 ): Promise<VolumeResponse> {
   const res = await fetch(
-    `${API_BASE}/volume?range=${range_}&groupBy=${groupBy}`,
+    `${API_BASE}/volume?range=${range_}&groupBy=${groupBy}&net=${network}`,
   );
   if (!res.ok) throw new Error("Failed to fetch volume data");
   return res.json();
@@ -83,8 +85,9 @@ export async function fetchStatsVolume(
 
 export async function fetchStatsJobs(
   range_: TimeRange = "24h",
+  network: "mainnet" | "testnet" = "mainnet",
 ): Promise<JobHealthResponse> {
-  const res = await fetch(`${API_BASE}/jobs?range=${range_}`);
+  const res = await fetch(`${API_BASE}/jobs?range=${range_}&net=${network}`);
   if (!res.ok) throw new Error("Failed to fetch job health");
   return res.json();
 }

@@ -3,6 +3,8 @@ import { proxyBridgeApi } from "@/lib/api-proxy";
 
 export async function POST(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const net = searchParams.get("net") ?? "mainnet";
     const body = await request.json();
 
     // Route to the correct backend endpoint based on request shape
@@ -31,7 +33,7 @@ export async function POST(request: Request) {
           dappId: body.dappId ?? 0,
           permit: body.permit,
         }),
-      });
+      }, net);
     }
 
     // Vault-funded flow
@@ -56,7 +58,7 @@ export async function POST(request: Request) {
         receiver: body.receiver,
         dappId: body.dappId ?? 0,
       }),
-    });
+    }, net);
   } catch (err) {
     console.error("[bridge/process] Error:", err);
     return NextResponse.json(

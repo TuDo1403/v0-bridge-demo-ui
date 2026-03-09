@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useBridgeStore } from "@/lib/bridge-store";
 import { submitVaultFunded } from "@/lib/bridge-service";
 import { mapBackendStatus, isComposeFailed, isVaultRescueEligible, isComposeRescueNeeded } from "@/lib/types";
-import { CHAINS, chainIdToEid, LZ_SCAN_BASE } from "@/config/chains";
+import { CHAINS, chainIdToEid, getLzScanBase, BLOCK_TIME_SECONDS } from "@/config/chains";
+import { useNetworkStore } from "@/lib/network-store";
+import { useBlockConfirmations } from "@/hooks/use-block-confirmations";
 import { TOKENS, getTokenAddress, KNOWN_DAPPS } from "@/config/contracts";
 import type { BridgeSession } from "@/lib/types";
 import { TxBadge } from "./tx-badge";
@@ -215,13 +217,81 @@ function ComposeBadge({ status, txHash, explorerUrl }: {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Block confirmation progress                                        */
+/* ------------------------------------------------------------------ */
+
+function formatEta(seconds: number): string {
+  if (seconds <= 0) return "< 1s";
+  if (seconds < 60) return `~${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins < 60) return secs > 0 ? `~${mins}m ${secs}s` : `~${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remainMins = mins % 60;
+  return remainMins > 0 ? `~${hrs}h ${remainMins}m` : `~${hrs}h`;
+}
+
+function ConfirmationProgress({
+  current,
+  required,
+  progress,
+  etaSeconds,
+}: {
+  current: number;
+  required: number;
+  progress: number;
+  etaSeconds: number | null;
+}) {
+  const pct = Math.min(progress * 100, 100);
+  const isDone = current >= required;
+
+  return (
+    <div className="flex flex-col gap-1.5 px-4 pb-3">
+      <div className="flex items-center justify-between text-[10px] font-mono">
+        <span className="text-muted-foreground">
+          Block Confirmations
+        </span>
+        <span className={cn("tabular-nums", isDone ? "text-success" : "text-primary")}>
+          {current.toLocaleString()} / {required.toLocaleString()}
+        </span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-muted/50 overflow-hidden">
+        <div
+          className={cn(
+            "h-full rounded-full transition-all duration-700 ease-out",
+            isDone ? "bg-success" : "bg-primary"
+          )}
+          style={{ width: `${Math.max(pct, 0.5)}%` }}
+        />
+      </div>
+      {!isDone && etaSeconds != null && etaSeconds > 0 && (
+        <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground/60">
+          <span>{Math.round(pct)}%</span>
+          <span>ETA {formatEta(etaSeconds)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main tracking card                                                  */
 /* ------------------------------------------------------------------ */
 
 export function TrackingCard({ session }: { session: BridgeSession }) {
   const { updateSession, setActiveSession } = useBridgeStore();
+  const network = useNetworkStore((s) => s.network);
+  const LZ_SCAN_BASE = getLzScanBase(network);
   const phase = derivePhase(session);
   const [expanded, setExpanded] = useState(phase === "failed");
+
+  // Block confirmation tracking for "indexing" / "waiting" phases
+  const bridgeTxHash = session.selfBridgeTxHash || session.backendProcessTxHash;
+  const showConfirmations = (phase === "indexing" || phase === "waiting" || phase === "inflight") && !!bridgeTxHash;
+  const confirmations = useBlockConfirmations(
+    showConfirmations ? session.sourceChainId : undefined,
+    showConfirmations ? bridgeTxHash : undefined,
+  );
   const [pollCount, setPollCount] = useState(0);
   const lz = session.lzTracking;
   const sourceChain = CHAINS[session.sourceChainId];
@@ -251,6 +321,11 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
           <div className="flex items-center gap-2">
             <span className={cn("text-sm font-mono font-medium", phaseColor(phase))}>
               {phaseLabel(phase)}
+              {showConfirmations && confirmations.required > 0 && !confirmations.isLoading && (
+                <span className="text-xs text-muted-foreground font-normal ml-1.5">
+                  ({confirmations.current}/{confirmations.required})
+                </span>
+              )}
             </span>
             {!isTerminal && <ElapsedTimer since={session.createdAt} />}
           </div>
@@ -328,6 +403,16 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
       <div className="px-4 pb-3">
         <PhaseProgressBar steps={phaseSteps} current={phase} labels={PHASE_LABELS} />
       </div>
+
+      {/* Block confirmation progress */}
+      {showConfirmations && confirmations.required > 0 && !confirmations.isLoading && (
+        <ConfirmationProgress
+          current={confirmations.current}
+          required={confirmations.required}
+          progress={confirmations.progress}
+          etaSeconds={confirmations.etaSeconds}
+        />
+      )}
 
       {/* Recovered banner */}
       {phase === "recovered" && (
@@ -550,7 +635,7 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                           token,
                           receiver: session.recipientAddress ?? session.userAddress,
                           dappId: session.dappId ?? 0,
-                        });
+                        }, network);
                         const updated: BridgeSession = {
                           ...session,
                           status: mapBackendStatus(res.status),

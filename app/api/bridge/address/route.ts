@@ -3,6 +3,8 @@ import { proxyBridgeApi } from "@/lib/api-proxy";
 
 export async function POST(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const net = searchParams.get("net") ?? "mainnet";
     const body = await request.json();
 
     const required = ["srcEid", "dstEid", "srcAddr", "dstAddr", "dappId", "direction"];
@@ -26,7 +28,7 @@ export async function POST(request: Request) {
         dappId: body.dappId,
         direction: body.direction,
       }),
-    });
+    }, net);
   } catch (err) {
     console.error("[bridge/address] Error:", err);
     return NextResponse.json(

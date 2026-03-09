@@ -1,7 +1,25 @@
 import { create } from "zustand";
 import type { BridgeSession, BridgeStatus } from "./types";
-import { BRIDGE_ROUTES } from "@/config/chains";
+import { BRIDGE_ROUTES_BY_NETWORK } from "@/config/chains";
 import { getBridgeDirection, type BridgeDirection, type BridgeMode, type TransferMode } from "@/config/contracts";
+import { type NetworkId } from "@/lib/network-store";
+
+/** Read the persisted network to determine initial defaults */
+function getInitialNetwork(): NetworkId {
+  if (typeof window === "undefined") return "mainnet";
+  try {
+    const stored = localStorage.getItem("rise-bridge-network");
+    if (stored === "testnet" || stored === "mainnet") return stored;
+  } catch {
+    // ignore
+  }
+  return "mainnet";
+}
+
+function getInitialRoutes() {
+  const network = getInitialNetwork();
+  return BRIDGE_ROUTES_BY_NETWORK[network];
+}
 
 /* ------------------------------------------------------------------ */
 /*  LocalStorage helpers                                               */
@@ -90,8 +108,8 @@ interface BridgeStore {
 }
 
 export const useBridgeStore = create<BridgeStore>((set, get) => ({
-  sourceChainId: BRIDGE_ROUTES[0]?.sourceChainId ?? 11155111,
-  destChainId: BRIDGE_ROUTES[0]?.destChainId ?? 11155931,
+  sourceChainId: getInitialRoutes()[0]?.sourceChainId ?? 1,
+  destChainId: getInitialRoutes()[0]?.destChainId ?? 4153,
   tokenKey: "USDC",
   amount: "",
   depositAddress: "",
@@ -117,7 +135,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
 
   swapDirection: () => {
     const { sourceChainId, destChainId } = get();
-    const newDirection: BridgeDirection = sourceChainId === 11155111 ? "withdraw" : "deposit";
+    const newDirection = getBridgeDirection(destChainId);
     set({
       sourceChainId: destChainId,
       destChainId: sourceChainId,

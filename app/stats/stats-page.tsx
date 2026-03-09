@@ -13,6 +13,7 @@ import {
   type JobHealthResponse,
 } from "@/lib/stats-service";
 import { eidToChainMeta } from "@/config/chains";
+import { useNetworkStore } from "@/lib/network-store";
 import { cn } from "@/lib/utils";
 import {
   ChartContainer,
@@ -75,22 +76,23 @@ const JOB_STATUS_COLORS: Record<string, string> = {
 
 export function StatsPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
+  const network = useNetworkStore((s) => s.network);
 
   const { data: summary, isLoading: summaryLoading } = useSWR(
-    ["stats-summary", timeRange],
-    () => fetchStatsSummary(timeRange),
+    ["stats-summary", timeRange, network],
+    () => fetchStatsSummary(timeRange, network),
     { refreshInterval: 30_000 },
   );
 
   const { data: volume, isLoading: volumeLoading } = useSWR(
-    ["stats-volume", timeRange],
-    () => fetchStatsVolume(timeRange, timeRange === "24h" ? "hour" : "day"),
+    ["stats-volume", timeRange, network],
+    () => fetchStatsVolume(timeRange, timeRange === "24h" ? "hour" : "day", network),
     { refreshInterval: 30_000 },
   );
 
   const { data: jobs, isLoading: jobsLoading } = useSWR(
-    ["stats-jobs", timeRange],
-    () => fetchStatsJobs(timeRange),
+    ["stats-jobs", timeRange, network],
+    () => fetchStatsJobs(timeRange, network),
     { refreshInterval: 15_000 },
   );
 

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { proxyBridgeApi } from "@/lib/api-proxy";
 
 /**
- * GET /api/bridge/history?address=0x...&limit=5&offset=0&srcEid=40161&dstEid=40438
+ * GET /api/bridge/history?address=0x...&limit=5&offset=0&srcEid=40161&dstEid=40438&net=mainnet
  *
  * Proxies to backend: GET /v1/bridge/history/{address}?limit=&offset=&srcEid=&dstEid=
  */
@@ -13,6 +13,7 @@ export async function GET(request: Request) {
   const offset = searchParams.get("offset") ?? "0";
   const srcEid = searchParams.get("srcEid");
   const dstEid = searchParams.get("dstEid");
+  const net = searchParams.get("net") ?? "mainnet";
 
   if (!address) {
     return NextResponse.json(
@@ -27,7 +28,8 @@ export async function GET(request: Request) {
     if (dstEid) params.set("dstEid", dstEid);
     return proxyBridgeApi(
       `/v1/bridge/history/${encodeURIComponent(address)}?${params}`,
-      { cache: "no-store" }
+      { cache: "no-store" },
+      net,
     );
   } catch (err) {
     console.error("[bridge/history] Error:", err);

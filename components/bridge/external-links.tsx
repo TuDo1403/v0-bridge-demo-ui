@@ -1,19 +1,23 @@
 "use client";
 
 import { ExternalLink } from "lucide-react";
-import { EXTERNAL_LINKS } from "@/config/chains";
-
-const links = [
-  { label: "LZ Scan", url: EXTERNAL_LINKS.lzTools },
-  { label: "API", url: EXTERNAL_LINKS.lzApi },
-  { label: "OFT Docs", url: EXTERNAL_LINKS.oftDocs },
-  { label: "Portfolio", url: EXTERNAL_LINKS.risePortfolio },
-];
+import { getExternalLinks } from "@/config/chains";
+import { useNetworkStore } from "@/lib/network-store";
 
 export function ExternalLinksBar() {
+  const network = useNetworkStore((s) => s.network);
+  const links = getExternalLinks(network);
+
+  const items = [
+    { label: "LZ Scan", url: links.lzTools },
+    { label: "API", url: links.lzApi },
+    { label: "OFT Docs", url: links.oftDocs },
+    { label: "Portfolio", url: links.risePortfolio },
+  ];
+
   return (
     <div className="flex flex-wrap items-center gap-3">
-      {links.map((link) => (
+      {items.map((link) => (
         <a
           key={link.label}
           href={link.url}

@@ -31,7 +31,6 @@ import {
   getGlobalWithdrawAddress,
   getBridgeDirection,
 } from "@/config/contracts";
-import { BRIDGE_ROUTES } from "@/config/chains";
 import {
   submitVaultFunded,
   submitPermit,
@@ -39,6 +38,7 @@ import {
   pollLzScan,
   isTerminalStatus,
 } from "@/lib/bridge-service";
+import { useNetworkStore } from "@/lib/network-store";
 import { CONTRACT_ERROR_MAP, mapBackendStatus, isComposeFailed, type BridgeStatus, type BridgeSession } from "@/lib/types";
 
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,7 @@ export function BridgePanel() {
   const { address, isConnected, chainId: walletChainId } = useAccount();
   const { switchChain } = useSwitchChain();
   const publicClient = usePublicClient();
+  const network = useNetworkStore((s) => s.network);
 
   const {
     sourceChainId,
@@ -619,7 +620,7 @@ export function BridgePanel() {
         token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
         receiver: activeSession.recipientAddress || activeSession.userAddress,
         dappId: sessionDappId,
-      });
+      }, network);
 
       updateSession(activeSession.id, {
         status: mapBackendStatus(res.status),
@@ -634,7 +635,7 @@ export function BridgePanel() {
       setError(errMsg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession, isDeposit, authorativeComposeMsg]);
+  }, [activeSession, isDeposit, authorativeComposeMsg, network]);
 
   const startPolling = useCallback(
     (jobId: string, sessionId: string) => {
@@ -642,7 +643,7 @@ export function BridgePanel() {
 
       pollingRef.current = setInterval(async () => {
         try {
-          const res = await pollBridgeStatus(jobId);
+          const res = await pollBridgeStatus(jobId, network);
           const mappedStatus = mapBackendStatus(res.status);
 
           // Extract tx hashes from transactions array
@@ -688,7 +689,7 @@ export function BridgePanel() {
       // Poll every 6s (LZ indexing can take 30-120s after tx mines)
       lzPollingRef.current = setInterval(async () => {
         try {
-          const snapshot = await pollLzScan(txHash);
+          const snapshot = await pollLzScan(txHash, network);
           if (!snapshot) return; // Not indexed yet, keep polling
 
           const lzStatus = snapshot.lzStatus ?? "";
@@ -885,7 +886,7 @@ export function BridgePanel() {
           nonce: permitData.nonce.toString(),
           signature: permitData.signature,
         },
-      });
+      }, network);
 
       // Step 3: Create session with jobId already set → goes straight to "polling" step
       const session = createSession({
@@ -1057,7 +1058,7 @@ export function BridgePanel() {
         token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
         receiver: activeSession.recipientAddress || activeSession.userAddress,
         dappId: sessionDappId,
-      });
+      }, network);
 
       updateSession(activeSession.id, {
         status: mapBackendStatus(res.status),

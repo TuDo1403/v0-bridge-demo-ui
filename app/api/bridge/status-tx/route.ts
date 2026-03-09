@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { proxyBridgeApi } from "@/lib/api-proxy";
 
 /**
- * GET /api/bridge/status-tx?txHash=0x...
+ * GET /api/bridge/status-tx?txHash=0x...&net=mainnet
  *
  * Proxies to backend: GET /v1/bridge/status/tx/{txHash}
  * Matches against userTransferTxHash, backendProcessTxHash,
@@ -11,6 +11,7 @@ import { proxyBridgeApi } from "@/lib/api-proxy";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const txHash = searchParams.get("txHash");
+  const net = searchParams.get("net") ?? "mainnet";
 
   if (!txHash) {
     return NextResponse.json(
@@ -22,7 +23,8 @@ export async function GET(request: Request) {
   try {
     return proxyBridgeApi(
       `/v1/bridge/status/tx/${encodeURIComponent(txHash)}`,
-      { cache: "no-store" }
+      { cache: "no-store" },
+      net,
     );
   } catch (err) {
     console.error("[bridge/status-tx] Error:", err);

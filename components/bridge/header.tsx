@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { WalletButton } from "./wallet-button";
 import { NavTabs } from "./nav-tabs";
+import { NetworkToggle } from "./network-toggle";
 import { useAccount } from "wagmi";
 import { CHAINS } from "@/config/chains";
 
@@ -13,20 +14,17 @@ export function BridgeHeader() {
   return (
     <header className="flex flex-col gap-3 pb-3 sm:pb-4 border-b border-border">
       <div className="flex items-center justify-between gap-2 sm:gap-4">
-        <Link href="/bridge" className="flex items-center gap-2 sm:gap-3 min-w-0">
-          <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
-            <span className="text-primary font-mono text-xs sm:text-sm font-bold">R</span>
-          </div>
-          <div className="flex flex-col min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <Link href="/bridge" className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
+              <span className="text-primary font-mono text-xs sm:text-sm font-bold">R</span>
+            </div>
             <h1 className="text-xs sm:text-sm font-mono font-bold text-foreground tracking-tight">
-              <span className="hidden sm:inline">RISE Bridge</span>
-              <span className="sm:hidden">RISE Bridge</span>
+              RISE Bridge
             </h1>
-            <span className="text-[10px] font-mono text-muted-foreground">
-              Testnet
-            </span>
-          </div>
-        </Link>
+          </Link>
+          <NetworkToggle />
+        </div>
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {isConnected && chainMeta && (

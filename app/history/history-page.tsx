@@ -8,7 +8,8 @@ import { useAccount } from "wagmi";
 import { PageShell } from "@/components/bridge/page-shell";
 import { fetchHistory, pollLzScan } from "@/lib/bridge-service";
 import type { TxHashPair, HistoryResponse, LzTrackingSnapshot } from "@/lib/types";
-import { CHAINS, LZ_SCAN_BASE, eidToChainMeta } from "@/config/chains";
+import { CHAINS, getLzScanBase, eidToChainMeta } from "@/config/chains";
+import { useNetworkStore } from "@/lib/network-store";
 import { TxBadge } from "@/components/bridge/tx-badge";
 import { ChainIcon, TokenIcon } from "@/components/bridge/chain-icon";
 import { Button } from "@/components/ui/button";
@@ -84,6 +85,8 @@ function HistoryItemCard({
   lzData?: LzTrackingSnapshot | null;
 }) {
   const router = useRouter();
+  const network = useNetworkStore((s) => s.network);
+  const LZ_SCAN_BASE = getLzScanBase(network);
 
   const srcChain = lzData?.srcEid ? eidToChainMeta(lzData.srcEid) : undefined;
   const dstChain = lzData?.dstEid ? eidToChainMeta(lzData.dstEid) : undefined;
@@ -234,6 +237,8 @@ const PAGE_SIZES = [5, 10, 20];
 export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
   const router = useRouter();
   const { address: walletAddress } = useAccount();
+  const network = useNetworkStore((s) => s.network);
+  const LZ_SCAN_BASE = getLzScanBase(network);
 
   const address = addressParam ?? walletAddress;
 
@@ -267,7 +272,7 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
     mutate,
   } = useSWR<HistoryResponse>(
     address ? ["bridge-history", address, page, pageSize, srcEidFilter, dstEidFilter] : null,
-    () => fetchHistory(address!, pageSize, page * pageSize, srcEid, dstEid),
+    () => fetchHistory(address!, pageSize, page * pageSize, srcEid, dstEid, network),
     { refreshInterval: 15000, revalidateOnFocus: true }
   );
 
@@ -289,7 +294,7 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
 
     // Fetch all in parallel, then batch-update results
     const results = await Promise.allSettled(
-      toFetch.map((item) => pollLzScan(item.bridge_tx_hash).then((snapshot) => ({ hash: item.bridge_tx_hash, snapshot })))
+      toFetch.map((item) => pollLzScan(item.bridge_tx_hash, network).then((snapshot) => ({ hash: item.bridge_tx_hash, snapshot })))
     );
 
     setLzCache((prev) => {

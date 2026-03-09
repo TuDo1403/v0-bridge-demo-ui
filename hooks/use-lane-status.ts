@@ -9,7 +9,8 @@ import {
   getGlobalDepositAddress,
   getTokenAddress,
 } from "@/config/contracts";
-import { CHAINS, sepoliaChain, riseTestnetChain } from "@/config/chains";
+import { CHAINS } from "@/config/chains";
+import { useNetworkStore, NETWORK_CHAIN_IDS } from "@/lib/network-store";
 import type { LaneInfo, RateLimitData } from "@/components/bridge/lane-status";
 
 interface UseLaneStatusReturn {
@@ -26,10 +27,10 @@ interface UseLaneStatusReturn {
  * Deposit lane: always active if the GlobalDeposit contract exists.
  */
 export function useLaneStatus(): UseLaneStatusReturn {
-  const riseChainId = riseTestnetChain.id;
-  const sepoliaChainId = sepoliaChain.id;
+  const network = useNetworkStore((s) => s.network);
+  const { eth: ethChainId, rise: riseChainId } = NETWORK_CHAIN_IDS[network];
   const globalWithdrawAddr = getGlobalWithdrawAddress(riseChainId);
-  const globalDepositAddr = getGlobalDepositAddress(sepoliaChainId);
+  const globalDepositAddr = getGlobalDepositAddress(ethChainId);
   const usdcOnRise = getTokenAddress("USDC", riseChainId);
 
   // --- Withdrawal lanes: get registered dstEids ---
@@ -80,10 +81,10 @@ export function useLaneStatus(): UseLaneStatusReturn {
   const lanes = useMemo<LaneInfo[]>(() => {
     const result: LaneInfo[] = [];
 
-    // Deposit lane (Sepolia → RISE): always active if contract exists
+    // Deposit lane (ETH → RISE): always active if contract exists
     if (globalDepositAddr) {
       result.push({
-        sourceChainId: sepoliaChainId,
+        sourceChainId: ethChainId,
         destChainId: riseChainId,
         active: true,
         paused: false,
@@ -126,7 +127,7 @@ export function useLaneStatus(): UseLaneStatusReturn {
     });
 
     return result;
-  }, [globalDepositAddr, sepoliaChainId, riseChainId, dstEids, batchData]);
+  }, [globalDepositAddr, ethChainId, riseChainId, dstEids, batchData]);
 
   return {
     lanes,

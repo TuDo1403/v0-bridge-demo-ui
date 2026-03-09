@@ -1,12 +1,21 @@
 /* ------------------------------------------------------------------ */
-/*  LayerZero Scan API client (testnet)                                */
+/*  LayerZero Scan API client                                          */
 /*  Endpoints:                                                         */
 /*    GET /v1/messages/tx/{txHash}   – lookup by source tx hash        */
 /*    GET /v1/messages/guid/{guid}   – lookup by GUID (primary after   */
 /*                                     first discovery)                */
 /* ------------------------------------------------------------------ */
 
-const LZ_API_BASE = process.env.LZ_SCAN_API_TESTNET ?? "https://scan-testnet.layerzero-api.com/v1";
+import type { NetworkId } from "@/lib/network-store";
+
+const LZ_API_BASES: Record<NetworkId, string> = {
+  testnet: process.env.LZ_SCAN_API_TESTNET ?? "https://scan-testnet.layerzero-api.com/v1",
+  mainnet: process.env.LZ_SCAN_API_MAINNET ?? "https://scan.layerzero-api.com/v1",
+};
+
+function getLzApiBase(network: NetworkId): string {
+  return LZ_API_BASES[network];
+}
 
 /* ---- Normalised types ---- */
 
@@ -205,10 +214,12 @@ async function parseLzResponse(res: Response | null): Promise<LzTrackingData | n
  * Returns null if the message hasn't been indexed yet.
  */
 export async function fetchBySourceTxHash(
-  txHash: string
+  txHash: string,
+  network: NetworkId = "mainnet"
 ): Promise<LzTrackingData | null> {
+  const base = getLzApiBase(network);
   return parseLzResponse(
-    await fetchWithRetry(`${LZ_API_BASE}/messages/tx/${txHash}`)
+    await fetchWithRetry(`${base}/messages/tx/${txHash}`)
   );
 }
 
@@ -216,9 +227,11 @@ export async function fetchBySourceTxHash(
  * Look up LZ message by GUID (more reliable once GUID is known).
  */
 export async function fetchByGuid(
-  guid: string
+  guid: string,
+  network: NetworkId = "mainnet"
 ): Promise<LzTrackingData | null> {
+  const base = getLzApiBase(network);
   return parseLzResponse(
-    await fetchWithRetry(`${LZ_API_BASE}/messages/guid/${guid}`)
+    await fetchWithRetry(`${base}/messages/guid/${guid}`)
   );
 }

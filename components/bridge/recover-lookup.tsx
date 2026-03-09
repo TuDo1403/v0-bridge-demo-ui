@@ -8,8 +8,9 @@ import { VaultDisplay } from "./vault-recover";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useDepositAddress } from "@/hooks/use-deposit-address";
-import { CHAINS, SUPPORTED_CHAIN_IDS } from "@/config/chains";
+import { CHAINS, getSupportedChainIds } from "@/config/chains";
 import { KNOWN_DAPPS, getBridgeDirection } from "@/config/contracts";
+import { useNetworkStore } from "@/lib/network-store";
 import {
   Loader2,
   XCircle,
@@ -23,6 +24,8 @@ import {
 
 export function RecoverLookup() {
   const { address: connectedAddress } = useAccount();
+  const network = useNetworkStore((s) => s.network);
+  const SUPPORTED_CHAIN_IDS = getSupportedChainIds(network);
 
   const [sourceChainId, setSourceChainId] = useState<number>(SUPPORTED_CHAIN_IDS[0]);
   const [destChainId, setDestChainId] = useState<number>(SUPPORTED_CHAIN_IDS[1] ?? SUPPORTED_CHAIN_IDS[0]);
@@ -76,6 +79,7 @@ export function RecoverLookup() {
               label="Source Chain"
               value={sourceChainId}
               onChange={setField(setSourceChainId)}
+              chainIds={SUPPORTED_CHAIN_IDS}
             />
             <button
               onClick={() => { setSourceChainId(destChainId); setDestChainId(sourceChainId); resetLookup(); }}
@@ -88,6 +92,7 @@ export function RecoverLookup() {
               label="Dest Chain"
               value={destChainId}
               onChange={setField(setDestChainId)}
+              chainIds={SUPPORTED_CHAIN_IDS}
             />
           </div>
 
@@ -195,10 +200,12 @@ function ChainSelect({
   label,
   value,
   onChange,
+  chainIds,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
+  chainIds: number[];
 }) {
   return (
     <div className="flex flex-col gap-1 flex-1">
@@ -210,7 +217,7 @@ function ChainSelect({
         onChange={(e) => onChange(Number(e.target.value))}
         className="h-9 px-3 rounded-md border border-border bg-background text-[12px] font-mono text-foreground"
       >
-        {SUPPORTED_CHAIN_IDS.map((id) => (
+        {chainIds.map((id) => (
           <option key={id} value={id}>{CHAINS[id]?.label}</option>
         ))}
       </select>

@@ -5,6 +5,7 @@ import { type Address } from "viem";
 import { chainIdToEid } from "@/config/chains";
 import { type BridgeDirection } from "@/config/contracts";
 import { getDepositAddress } from "@/lib/bridge-service";
+import { useNetworkStore } from "@/lib/network-store";
 
 interface UseDepositAddressParams {
   sourceChainId: number;
@@ -35,6 +36,7 @@ export function useDepositAddress({
   recipientAddress,
   direction,
 }: UseDepositAddressParams): UseDepositAddressReturn {
+  const network = useNetworkStore((s) => s.network);
   const [depositAddress, setDepositAddress] = useState<Address | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [isError, setIsError] = useState(false);
@@ -63,6 +65,7 @@ export function useDepositAddress({
         dstAddr: recipient,
         dappId: effectiveDappId,
         direction,
+        network,
       });
       setDepositAddress(result.address as Address);
     } catch {
@@ -70,7 +73,7 @@ export function useDepositAddress({
     } finally {
       setIsLoading(false);
     }
-  }, [srcEid, dstEid, address, recipient, effectiveDappId]);
+  }, [srcEid, dstEid, address, recipient, effectiveDappId, network]);
 
   useEffect(() => {
     if (!address || !recipient) {
@@ -91,6 +94,7 @@ export function useDepositAddress({
           dstAddr: recipient,
           dappId: effectiveDappId,
           direction,
+          network,
         });
 
         if (!cancelled) {
@@ -106,7 +110,7 @@ export function useDepositAddress({
     return () => {
       cancelled = true;
     };
-  }, [srcEid, dstEid, address, recipient, effectiveDappId]);
+  }, [srcEid, dstEid, address, recipient, effectiveDappId, network]);
 
   return {
     depositAddress,

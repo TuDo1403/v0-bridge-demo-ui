@@ -19,9 +19,10 @@ async function throwApiError(res: Response, fallback: string): never {
 
 /** Submit a vault-funded bridge request. */
 export async function submitVaultFunded(
-  req: VaultFundedRequest
+  req: VaultFundedRequest,
+  network: "mainnet" | "testnet" = "mainnet"
 ): Promise<BridgeProcessResponse> {
-  const res = await fetch(`${API_BASE}/process`, {
+  const res = await fetch(`${API_BASE}/process?net=${network}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -40,9 +41,10 @@ export async function submitVaultFunded(
 
 /** Submit a permit2 bridge request. */
 export async function submitPermit(
-  req: PermitProcessRequest
+  req: PermitProcessRequest,
+  network: "mainnet" | "testnet" = "mainnet"
 ): Promise<BridgeProcessResponse> {
-  const res = await fetch(`${API_BASE}/process`, {
+  const res = await fetch(`${API_BASE}/process?net=${network}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -60,10 +62,11 @@ export async function submitPermit(
 }
 
 export async function pollBridgeStatus(
-  jobId: string
+  jobId: string,
+  network: "mainnet" | "testnet" = "mainnet"
 ): Promise<BridgeStatusResponse> {
   const res = await fetch(
-    `${API_BASE}/status?jobId=${encodeURIComponent(jobId)}`
+    `${API_BASE}/status?jobId=${encodeURIComponent(jobId)}&net=${network}`
   );
 
   if (!res.ok) await throwApiError(res, "Status poll failed");
@@ -75,10 +78,11 @@ export async function pollBridgeStatus(
  * Returns a lightweight TxHashPair, or null if not found.
  */
 export async function lookupByTxHash(
-  txHash: string
+  txHash: string,
+  network: "mainnet" | "testnet" = "mainnet"
 ): Promise<TxHashPair | null> {
   const res = await fetch(
-    `${API_BASE}/status-tx?txHash=${encodeURIComponent(txHash)}`
+    `${API_BASE}/status-tx?txHash=${encodeURIComponent(txHash)}&net=${network}`
   );
 
   if (res.status === 404) return null;
@@ -95,12 +99,14 @@ export async function fetchHistory(
   limit = 5,
   offset = 0,
   srcEid?: number,
-  dstEid?: number
+  dstEid?: number,
+  network: "mainnet" | "testnet" = "mainnet"
 ): Promise<HistoryResponse> {
   const params = new URLSearchParams({
     address,
     limit: String(limit),
     offset: String(offset),
+    net: network,
   });
   if (srcEid) params.set("srcEid", String(srcEid));
   if (dstEid) params.set("dstEid", String(dstEid));
@@ -123,11 +129,20 @@ export async function getDepositAddress(params: {
   dstAddr: string;
   dappId: number;
   direction: string;
+  network?: "mainnet" | "testnet";
 }): Promise<{ address: string }> {
-  const res = await fetch(`${API_BASE}/address`, {
+  const net = params.network ?? "mainnet";
+  const res = await fetch(`${API_BASE}/address?net=${net}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      srcEid: params.srcEid,
+      dstEid: params.dstEid,
+      srcAddr: params.srcAddr,
+      dstAddr: params.dstAddr,
+      dappId: params.dappId,
+      direction: params.direction,
+    }),
   });
 
   if (!res.ok) await throwApiError(res, "Deposit address lookup failed");
@@ -176,7 +191,7 @@ function normalizeComposeStatus(raw: string | undefined): string | undefined {
  */
 export async function pollLzScan(
   txHash: string,
-  net: "testnet" | "mainnet" = "testnet"
+  net: "testnet" | "mainnet" = "mainnet"
 ): Promise<LzTrackingSnapshot | null> {
   const res = await fetch(
     `${LZ_API}/lookup?hash=${encodeURIComponent(txHash)}&net=${net}`

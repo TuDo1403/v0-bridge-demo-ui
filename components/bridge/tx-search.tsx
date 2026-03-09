@@ -10,7 +10,8 @@ import { AddressPill } from "./address-pill";
 import { PhaseProgressBar } from "./phase-progress-bar";
 import { cn } from "@/lib/utils";
 import { normalizeLzStatus, type LzTrackingData } from "@/lib/layerzero";
-import { CHAINS, LZ_SCAN_BASE } from "@/config/chains";
+import { CHAINS, getLzScanBase } from "@/config/chains";
+import { useNetworkStore } from "@/lib/network-store";
 import { lookupByTxHash } from "@/lib/bridge-service";
 import type { TxHashPair } from "@/lib/types";
 import {
@@ -193,6 +194,8 @@ function LzResultCard({
   vaultFundTxHash?: string | null;
   onClose: () => void;
 }) {
+  const network = useNetworkStore((s) => s.network);
+  const LZ_SCAN_BASE = getLzScanBase(network);
   const [expanded, setExpanded] = useState(true);
   const phase = derivePhase(data);
   const meta = PHASE_META[phase];
@@ -440,6 +443,8 @@ export function TxSearch({
 } = {}) {
   const router = useRouter();
   const pathname = usePathname();
+  const network = useNetworkStore((s) => s.network);
+  const LZ_SCAN_BASE = getLzScanBase(network);
   const [query, setQuery] = useState(initialHash ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -517,7 +522,7 @@ export function TxSearch({
     // Step 1: Query our backend for tx hash pair
     let pair: TxHashPair | null = null;
     if (isHexHash) {
-      pair = await lookupByTxHash(trimmed).catch(() => null);
+      pair = await lookupByTxHash(trimmed, network).catch(() => null);
       if (pair) setTxPair(pair);
     }
 
