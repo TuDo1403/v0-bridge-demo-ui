@@ -187,6 +187,8 @@ export interface BridgeSession {
   recipientAddress: string;
   depositAddress: string;
   status: BridgeStatus;
+  /** Network this session belongs to (mainnet or testnet) */
+  network?: "mainnet" | "testnet";
   /** Bridge direction: deposit (Home→Remote) or withdraw (Remote→Home) */
   direction?: "deposit" | "withdraw";
   /** Dapp ID for compose routing (0 = direct bridge, deposit-only) */

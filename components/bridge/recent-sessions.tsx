@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useBridgeStore } from "@/lib/bridge-store";
+import { useNetworkStore } from "@/lib/network-store";
 import { STATUS_LABELS, mapBackendStatus, isComposeFailed, isVaultRescueEligible, isComposeRescueNeeded, type BridgeSession, type BridgeStatus } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
 import { TOKENS } from "@/config/contracts";
@@ -201,8 +202,12 @@ function SessionRow({
 /* ------------------------------------------------------------------ */
 
 export function RecentSessions() {
-  const sessions = useBridgeStore((s) => s.recentSessions);
+  const allSessions = useBridgeStore((s) => s.recentSessions);
   const activeSession = useBridgeStore((s) => s.activeSession);
+  const network = useNetworkStore((s) => s.network);
+
+  // Filter sessions by current network (legacy sessions without network field show on mainnet)
+  const sessions = allSessions.filter((s) => (s.network ?? "mainnet") === network);
 
   if (sessions.length === 0) {
     return (

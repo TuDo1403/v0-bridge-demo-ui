@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { BridgeSession, BridgeStatus } from "./types";
 import { BRIDGE_ROUTES_BY_NETWORK } from "@/config/chains";
 import { getBridgeDirection, type BridgeDirection, type BridgeMode, type TransferMode } from "@/config/contracts";
-import { type NetworkId } from "@/lib/network-store";
+import { type NetworkId, useNetworkStore } from "@/lib/network-store";
 
 /** Read the persisted network to determine initial defaults */
 function getInitialNetwork(): NetworkId {
@@ -158,6 +158,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
       recipientAddress,
       depositAddress,
       status: "awaiting_transfer" as BridgeStatus,
+      network: useNetworkStore.getState().network,
       direction: state.direction,
       dappId: state.dappId,
       bridgeMode: state.bridgeMode,
