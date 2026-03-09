@@ -243,6 +243,10 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
     set({
       amount: "",
       recipientAddress: "",
+      depositAddress: "",
       activeSession: null,
+      dappId: 0,
+      bridgeMode: "operator",
+      transferMode: "vault",
     }),
 }));
