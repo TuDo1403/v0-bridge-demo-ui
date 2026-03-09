@@ -102,19 +102,39 @@ export function InfoPanel() {
     query: { enabled: !!routerAddr, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
   });
 
-  // Destination EID - reads from on-chain contract (both deposit and withdraw have getDstEid)
+  // Destination EID - deposit: getDstEid() returns uint32, withdraw: getLanes() returns uint32[]
   const {
-    data: dstEid,
-    isLoading: isDstEidLoading,
-    isError: isDstEidError,
-    refetch: refetchDstEid,
+    data: depositDstEid,
+    isLoading: isDepositDstEidLoading,
+    isError: isDepositDstEidError,
+    refetch: refetchDepositDstEid,
   } = useReadContract({
-    address: routerAddr,
-    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
+    address: globalDepositAddr,
+    abi: riseGlobalDepositAbi,
     functionName: "getDstEid",
     chainId: sourceChainId,
-    query: { enabled: !!routerAddr, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
+    query: { enabled: isDeposit && !!globalDepositAddr, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
   });
+
+  const {
+    data: withdrawLanes,
+    isLoading: isWithdrawLanesLoading,
+    isError: isWithdrawLanesError,
+    refetch: refetchWithdrawLanes,
+  } = useReadContract({
+    address: globalWithdrawAddr,
+    abi: riseGlobalWithdrawAbi,
+    functionName: "getLanes",
+    chainId: sourceChainId,
+    query: { enabled: !isDeposit && !!globalWithdrawAddr, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
+  });
+
+  const dstEidDisplay = isDeposit
+    ? (depositDstEid !== undefined && depositDstEid !== null ? String(depositDstEid) : "--")
+    : (withdrawLanes && (withdrawLanes as number[]).length > 0 ? (withdrawLanes as number[]).join(", ") : "--");
+  const isDstEidLoading = isDeposit ? isDepositDstEidLoading : isWithdrawLanesLoading;
+  const isDstEidError = isDeposit ? isDepositDstEidError : isWithdrawLanesError;
+  const refetchDstEid = isDeposit ? refetchDepositDstEid : refetchWithdrawLanes;
 
   // User wallet balance
   const {
@@ -220,7 +240,7 @@ export function InfoPanel() {
         <DataRow label="Dest" value={destChain?.label ?? "--"} mono={false} iconKey={destChain?.iconKey} />
         <DataRow
           label="Dst EID"
-          value={dstEid !== undefined && dstEid !== null ? String(dstEid) : "--"}
+          value={dstEidDisplay}
           isLoading={isDstEidLoading}
           isError={isDstEidError}
           onRetry={() => refetchDstEid()}
