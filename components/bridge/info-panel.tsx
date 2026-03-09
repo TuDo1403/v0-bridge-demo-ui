@@ -102,18 +102,18 @@ export function InfoPanel() {
     query: { enabled: !!routerAddr, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
   });
 
-  // Destination EID - reads from on-chain contract (deposit only, withdraw uses lane config)
+  // Destination EID - reads from on-chain contract (both deposit and withdraw have getDstEid)
   const {
     data: dstEid,
     isLoading: isDstEidLoading,
     isError: isDstEidError,
     refetch: refetchDstEid,
   } = useReadContract({
-    address: globalDepositAddr,
-    abi: riseGlobalDepositAbi,
+    address: routerAddr,
+    abi: isDeposit ? riseGlobalDepositAbi : riseGlobalWithdrawAbi,
     functionName: "getDstEid",
     chainId: sourceChainId,
-    query: { enabled: isDeposit && !!globalDepositAddr, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
+    query: { enabled: !!routerAddr, refetchInterval: 60_000, retry: 3, retryDelay: 2000 },
   });
 
   // User wallet balance
@@ -220,9 +220,9 @@ export function InfoPanel() {
         <DataRow label="Dest" value={destChain?.label ?? "--"} mono={false} iconKey={destChain?.iconKey} />
         <DataRow
           label="Dst EID"
-          value={dstEid !== undefined && dstEid !== null ? String(dstEid) : String(destChain?.lzEid ?? "--")}
-          isLoading={isDeposit && isDstEidLoading}
-          isError={isDeposit && isDstEidError}
+          value={dstEid !== undefined && dstEid !== null ? String(dstEid) : "--"}
+          isLoading={isDstEidLoading}
+          isError={isDstEidError}
           onRetry={() => refetchDstEid()}
           highlight
         />
