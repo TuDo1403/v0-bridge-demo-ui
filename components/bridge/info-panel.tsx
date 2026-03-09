@@ -220,9 +220,9 @@ export function InfoPanel() {
         <DataRow label="Dest" value={destChain?.label ?? "--"} mono={false} iconKey={destChain?.iconKey} />
         <DataRow
           label="Dst EID"
-          value={dstEid !== undefined && dstEid !== null ? String(dstEid) : "--"}
-          isLoading={isDstEidLoading}
-          isError={isDstEidError}
+          value={dstEid !== undefined && dstEid !== null ? String(dstEid) : String(destChain?.lzEid ?? "--")}
+          isLoading={isDeposit && isDstEidLoading}
+          isError={isDeposit && isDstEidError}
           onRetry={() => refetchDstEid()}
           highlight
         />
