@@ -490,7 +490,7 @@ export function BridgePanel() {
     query: { enabled: !isDeposit && !!globalWithdrawAddr && !!tokenAddress && !!destLzEid, refetchInterval: 10_000, retry: 3, retryDelay: 2000 },
   });
 
-  const rateLimitInfo = rateLimitBucket
+  const rateLimitInfo = rateLimitBucket && (rateLimitBucket as { enabled: boolean }).enabled
     ? {
         available: BigInt((rateLimitBucket as { available: bigint }).available),
         capacity: BigInt((rateLimitBucket as { capacity: bigint }).capacity),
