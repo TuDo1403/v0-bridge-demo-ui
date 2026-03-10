@@ -37,7 +37,7 @@ export const TOKENS: Record<string, TokenMeta> = {
     addresses: {
       // Testnet
       11155111: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
-      11155931: "0xcd3981f696EB0E5baD1C573e040B17D701141B5E",
+      11155931: "0x6bf6e258b3c5650b448cb1112835048ba5619dc1",
       // Mainnet
       1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
       4153: "0xe436820ba0C69702c1d3E601d421c0eF38262739",
