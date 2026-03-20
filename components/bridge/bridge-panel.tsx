@@ -769,6 +769,7 @@ export function BridgePanel() {
    *  Session creation/update happens in the selfBridgeHash useEffect (when wallet confirms). */
   const handleSelfBridge = useCallback(async (permitData?: {
     permitType: number;
+    target: Address;
     deadline: bigint;
     nonce: bigint;
     signature: `0x${string}`;
@@ -784,6 +785,7 @@ export function BridgePanel() {
 
     const permit = permitData ?? {
       permitType: 0, // VaultFunded
+      target: "0x0000000000000000000000000000000000000000" as Address,
       deadline: 0n,
       nonce: 0n,
       signature: "0x" as `0x${string}`,
@@ -830,9 +832,14 @@ export function BridgePanel() {
     setError(null);
 
     try {
+      if (onChainProtocolFee === undefined) throw new Error("Fee quote not loaded yet — please wait a moment and retry");
+
       const parsedAmt = parseUnits(amount, token.decimals);
       const dstAddr = (recipientAddress || address) as Address;
       const routeParam = isDeposit ? dappId : (destLzEid ?? 0);
+
+      const fee = onChainProtocolFee;
+      const net = parsedAmt > fee ? parsedAmt - fee : 0n;
 
       const permitData = await permit2.signPermit({
         amount: parsedAmt,
@@ -840,6 +847,8 @@ export function BridgePanel() {
         srcAddress: address,
         dstAddress: dstAddr,
         routeParam,
+        feeAmount: fee,
+        netAmount: net,
       });
 
       await handleSelfBridge(permitData);
@@ -848,7 +857,7 @@ export function BridgePanel() {
       setError(msg.length > 200 ? msg.slice(0, 200) + "..." : msg);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, tokenAddress, amount, token, routerAddr, recipientAddress, isDeposit, dappId, destLzEid, permit2.signPermit, handleSelfBridge]);
+  }, [address, tokenAddress, amount, token, routerAddr, recipientAddress, isDeposit, dappId, destLzEid, onChainProtocolFee, permit2.signPermit, handleSelfBridge]);
 
   /** Operator + Permit2: sign permit, then send to backend for processing */
   const handleOperatorPermit2 = useCallback(async () => {
@@ -857,17 +866,24 @@ export function BridgePanel() {
     setIsPermit2Submitting(true);
 
     try {
+      if (onChainProtocolFee === undefined) throw new Error("Fee quote not loaded yet — please wait a moment and retry");
+
       const parsedAmt = parseUnits(amount, token.decimals);
       const dstAddr = (recipientAddress || address) as Address;
       const routeParam = isDeposit ? dappId : (destLzEid ?? 0);
 
       // Step 1: Sign the permit (wallet popup)
+      const fee = onChainProtocolFee;
+      const net = parsedAmt > fee ? parsedAmt - fee : 0n;
+
       const permitData = await permit2.signPermit({
         amount: parsedAmt,
         spender: routerAddr,
         srcAddress: address,
         dstAddress: dstAddr,
         routeParam,
+        feeAmount: fee,
+        netAmount: net,
       });
 
       // Step 2: Submit to backend BEFORE creating session.
@@ -882,6 +898,7 @@ export function BridgePanel() {
         amount: parsedAmt.toString(),
         dappId,
         permit: {
+          target: permitData.target,
           deadline: permitData.deadline.toString(),
           nonce: permitData.nonce.toString(),
           signature: permitData.signature,

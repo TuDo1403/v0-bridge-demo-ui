@@ -58,6 +58,21 @@ export interface FailureItem {
   updatedAt: string;
 }
 
+export interface ChainSyncInfo {
+  eid: number;
+  chainName: string;
+  role: string;
+  blockTag: string;
+  lastBlock: number;
+  startBlock: number;
+  updatedAt: string;
+  updatedAgo: string;
+}
+
+export interface SyncProgressResponse {
+  chains: ChainSyncInfo[];
+}
+
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
 // ── Fetchers ─────────────────────────────────────────────────────────────────
@@ -89,5 +104,13 @@ export async function fetchStatsJobs(
 ): Promise<JobHealthResponse> {
   const res = await fetch(`${API_BASE}/jobs?range=${range_}&net=${network}`);
   if (!res.ok) throw new Error("Failed to fetch job health");
+  return res.json();
+}
+
+export async function fetchSyncProgress(
+  network: "mainnet" | "testnet" = "mainnet",
+): Promise<SyncProgressResponse> {
+  const res = await fetch(`${API_BASE}/sync?net=${network}`);
+  if (!res.ok) throw new Error("Failed to fetch sync progress");
   return res.json();
 }

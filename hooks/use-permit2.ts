@@ -36,7 +36,10 @@ const DEPOSIT_WITNESS_TYPES = {
   DepositWitness: [
     { name: "dappId", type: "uint16" },
     { name: "dstAddress", type: "address" },
+    { name: "feeAmount", type: "uint256" },
+    { name: "netAmount", type: "uint256" },
     { name: "srcAddress", type: "address" },
+    { name: "verifier", type: "address" },
   ],
 } as const;
 
@@ -50,9 +53,12 @@ const WITHDRAWAL_WITNESS_TYPES = {
     { name: "witness", type: "WithdrawalWitness" },
   ],
   WithdrawalWitness: [
-    { name: "dstEid", type: "uint32" },
     { name: "dstAddress", type: "address" },
+    { name: "dstEid", type: "uint32" },
+    { name: "feeAmount", type: "uint256" },
+    { name: "netAmount", type: "uint256" },
     { name: "srcAddress", type: "address" },
+    { name: "verifier", type: "address" },
   ],
 } as const;
 
@@ -72,6 +78,7 @@ interface UsePermit2Params {
 
 interface PermitData {
   permitType: 1; // Permit2
+  target: Address;
   deadline: bigint;
   nonce: bigint;
   signature: `0x${string}`;
@@ -101,6 +108,10 @@ interface UsePermit2Return {
     dstAddress: Address;
     /** dappId for deposits, dstEid for withdrawals */
     routeParam: number;
+    /** Protocol fee amount (for witness binding) */
+    feeAmount: bigint;
+    /** Net amount after fee (for witness binding) */
+    netAmount: bigint;
   }) => Promise<PermitData>;
   isSigning: boolean;
 }
@@ -179,6 +190,8 @@ export function usePermit2({
       srcAddress: Address;
       dstAddress: Address;
       routeParam: number;
+      feeAmount: bigint;
+      netAmount: bigint;
     }): Promise<PermitData> => {
       if (!tokenAddress) throw new Error("Token address not found");
 
@@ -198,6 +211,7 @@ export function usePermit2({
       };
 
       const isDeposit = direction === "deposit";
+      const verifier = PERMIT2_ADDRESS as Address;
 
       const message = isDeposit
         ? {
@@ -208,7 +222,10 @@ export function usePermit2({
             witness: {
               dappId: params.routeParam, // uint16
               dstAddress: params.dstAddress,
+              feeAmount: params.feeAmount,
+              netAmount: params.netAmount,
               srcAddress: params.srcAddress,
+              verifier,
             },
           }
         : {
@@ -217,9 +234,12 @@ export function usePermit2({
             nonce,
             deadline,
             witness: {
-              dstEid: params.routeParam, // uint32
               dstAddress: params.dstAddress,
+              dstEid: params.routeParam, // uint32
+              feeAmount: params.feeAmount,
+              netAmount: params.netAmount,
               srcAddress: params.srcAddress,
+              verifier,
             },
           };
 
@@ -232,6 +252,7 @@ export function usePermit2({
 
       return {
         permitType: 1, // Permit2
+        target: PERMIT2_ADDRESS as Address,
         deadline,
         nonce,
         signature: signature as `0x${string}`,

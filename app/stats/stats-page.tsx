@@ -7,10 +7,12 @@ import {
   fetchStatsSummary,
   fetchStatsVolume,
   fetchStatsJobs,
+  fetchSyncProgress,
   type TimeRange,
   type StatsSummary,
   type VolumeResponse,
   type JobHealthResponse,
+  type SyncProgressResponse,
 } from "@/lib/stats-service";
 import { eidToChainMeta } from "@/config/chains";
 import { useNetworkStore } from "@/lib/network-store";
@@ -96,6 +98,12 @@ export function StatsPage() {
     { refreshInterval: 15_000 },
   );
 
+  const { data: syncData, isLoading: syncLoading } = useSWR(
+    ["stats-sync", network],
+    () => fetchSyncProgress(network),
+    { refreshInterval: 5_000 },
+  );
+
   return (
     <PageShell>
       <div className="space-y-4">
@@ -106,6 +114,9 @@ export function StatsPage() {
           </h1>
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
+
+        {/* Block Sync Progress */}
+        <BlockSyncProgress data={syncData} loading={syncLoading} />
 
         {/* Summary Cards */}
         <SummaryCards data={summary} loading={summaryLoading} />
@@ -583,6 +594,171 @@ function RecentFailures({
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Block Sync Progress                                                */
+/* ------------------------------------------------------------------ */
+
+function BlockSyncProgress({
+  data,
+  loading,
+}: {
+  data: SyncProgressResponse | undefined;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="border border-border/50 bg-card rounded-lg p-4">
+        <div className="flex items-center gap-1.5 mb-3">
+          <Activity className="h-3 w-3 text-muted-foreground" />
+          <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
+            Block Sync
+          </span>
+        </div>
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!data?.chains?.length) return null;
+
+  // Group by chain (eid) — each chain may have multiple block tags (latest, finalized)
+  const byChain = new Map<number, typeof data.chains>();
+  for (const c of data.chains) {
+    const list = byChain.get(c.eid) ?? [];
+    list.push(c);
+    byChain.set(c.eid, list);
+  }
+
+  return (
+    <div className="border border-border/50 bg-card rounded-lg p-4">
+      <div className="flex items-center gap-1.5 mb-4">
+        <Activity className="h-3 w-3 text-primary" />
+        <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
+          Block Sync
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {Array.from(byChain.entries()).map(([eid, cursors]) => {
+          const primary = cursors.find((c) => c.blockTag === "latest") ?? cursors[0];
+          const finality = cursors.find((c) => c.blockTag !== "latest");
+          const blocksProcessed = primary.lastBlock - Number(primary.startBlock);
+          const isRecent = primary.updatedAgo.includes("s ago") || primary.updatedAgo === "just now";
+
+          return (
+            <div
+              key={eid}
+              className="border border-border/30 rounded-lg p-3 space-y-2.5"
+            >
+              {/* Chain header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className={cn(
+                      "h-2 w-2 rounded-full",
+                      isRecent ? "bg-emerald-500 animate-pulse" : "bg-amber-500",
+                    )}
+                  />
+                  <span className="text-xs font-mono font-medium text-foreground">
+                    {primary.chainName}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-[9px] font-mono px-1.5 py-0.5 rounded",
+                      primary.role === "home"
+                        ? "bg-green-500/10 text-green-500"
+                        : "bg-blue-500/10 text-blue-500",
+                    )}
+                  >
+                    {primary.role}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  EID {eid}
+                </span>
+              </div>
+
+              {/* Latest block */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    HEAD
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {primary.updatedAgo}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-500",
+                        isRecent
+                          ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
+                          : "bg-gradient-to-r from-amber-500 to-amber-400",
+                      )}
+                      style={{ width: "100%" }}
+                    />
+                  </div>
+                  <span className="text-xs font-mono font-medium text-foreground tabular-nums min-w-[80px] text-right">
+                    {primary.lastBlock.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Finality block (if exists) */}
+              {finality && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-muted-foreground">
+                      {finality.blockTag.toUpperCase()}
+                    </span>
+                    <span className="text-[10px] font-mono text-muted-foreground">
+                      {finality.updatedAgo}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-blue-500/70 to-blue-400/70 rounded-full transition-all duration-500"
+                        style={{
+                          width:
+                            primary.lastBlock > 0
+                              ? `${Math.min(100, (finality.lastBlock / primary.lastBlock) * 100)}%`
+                              : "0%",
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs font-mono font-medium text-foreground tabular-nums min-w-[80px] text-right">
+                      {finality.lastBlock.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Stats row */}
+              <div className="flex items-center gap-3 pt-1 border-t border-border/20">
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  {blocksProcessed > 0
+                    ? `${blocksProcessed.toLocaleString()} blocks processed`
+                    : "starting..."}
+                </span>
+                {finality && primary.lastBlock > finality.lastBlock && (
+                  <span className="text-[10px] font-mono text-amber-500">
+                    {(primary.lastBlock - finality.lastBlock).toLocaleString()} behind HEAD
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

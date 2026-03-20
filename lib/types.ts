@@ -92,6 +92,7 @@ export interface PermitProcessRequest {
   amount: string;
   dappId: number;
   permit: {
+    target: string;
     deadline: string;
     nonce: string;
     signature: string;

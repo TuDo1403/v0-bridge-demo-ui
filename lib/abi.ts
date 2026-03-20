@@ -173,6 +173,7 @@ export const riseGlobalDepositAbi = [
             type: "tuple",
             components: [
               { name: "permitType", type: "uint8" },
+              { name: "target", type: "address" },
               { name: "deadline", type: "uint256" },
               { name: "nonce", type: "uint256" },
               { name: "signature", type: "bytes" },
@@ -409,6 +410,7 @@ export const riseGlobalWithdrawAbi = [
             type: "tuple",
             components: [
               { name: "permitType", type: "uint8" },
+              { name: "target", type: "address" },
               { name: "deadline", type: "uint256" },
               { name: "nonce", type: "uint256" },
               { name: "signature", type: "bytes" },
