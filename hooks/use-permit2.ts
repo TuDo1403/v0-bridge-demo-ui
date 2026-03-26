@@ -213,6 +213,10 @@ export function usePermit2({
       const isDeposit = direction === "deposit";
       const verifier = PERMIT2_ADDRESS as Address;
 
+      // Ensure uint256 fields are bigint — some wallets (Rabby) reject Number values
+      const feeAmount = BigInt(params.feeAmount);
+      const netAmount = BigInt(params.netAmount);
+
       const message = isDeposit
         ? {
             permitted: { token: tokenAddress, amount: params.amount },
@@ -222,8 +226,8 @@ export function usePermit2({
             witness: {
               dappId: params.routeParam, // uint16
               dstAddress: params.dstAddress,
-              feeAmount: params.feeAmount,
-              netAmount: params.netAmount,
+              feeAmount,
+              netAmount,
               srcAddress: params.srcAddress,
               verifier,
             },
@@ -236,8 +240,8 @@ export function usePermit2({
             witness: {
               dstAddress: params.dstAddress,
               dstEid: params.routeParam, // uint32
-              feeAmount: params.feeAmount,
-              netAmount: params.netAmount,
+              feeAmount,
+              netAmount,
               srcAddress: params.srcAddress,
               verifier,
             },

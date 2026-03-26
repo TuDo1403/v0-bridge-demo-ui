@@ -146,6 +146,12 @@ export function BridgePanel() {
   const [manualTxHash, setManualTxHash] = useState("");
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
   const [isPermit2Submitting, setIsPermit2Submitting] = useState(false);
+
+  // Reset stuck permit2 submitting state when user changes form inputs
+  useEffect(() => {
+    setIsPermit2Submitting(false);
+  }, [amount, tokenKey, sourceChainId, destChainId, transferMode, bridgeMode]);
+
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lzPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -832,13 +838,11 @@ export function BridgePanel() {
     setError(null);
 
     try {
-      if (onChainProtocolFee === undefined) throw new Error("Fee quote not loaded yet — please wait a moment and retry");
-
       const parsedAmt = parseUnits(amount, token.decimals);
       const dstAddr = (recipientAddress || address) as Address;
       const routeParam = isDeposit ? dappId : (destLzEid ?? 0);
 
-      const fee = onChainProtocolFee;
+      const fee = onChainProtocolFee!;
       const net = parsedAmt > fee ? parsedAmt - fee : 0n;
 
       const permitData = await permit2.signPermit({
@@ -861,13 +865,16 @@ export function BridgePanel() {
 
   /** Operator + Permit2: sign permit, then send to backend for processing */
   const handleOperatorPermit2 = useCallback(async () => {
-    if (!address || !tokenAddress || !amount || !token || !routerAddr || !depositAddress) return;
+    console.log("[operator-permit2] guard:", { address: !!address, tokenAddress: !!tokenAddress, amount: !!amount, token: !!token, routerAddr: !!routerAddr, onChainProtocolFee: String(onChainProtocolFee) });
+    if (!address || !tokenAddress || !amount || !token || !routerAddr || !onChainProtocolFee) {
+      console.log("[operator-permit2] BLOCKED");
+      return;
+    }
+    console.log("[operator-permit2] proceeding to sign");
     setError(null);
     setIsPermit2Submitting(true);
 
     try {
-      if (onChainProtocolFee === undefined) throw new Error("Fee quote not loaded yet — please wait a moment and retry");
-
       const parsedAmt = parseUnits(amount, token.decimals);
       const dstAddr = (recipientAddress || address) as Address;
       const routeParam = isDeposit ? dappId : (destLzEid ?? 0);
@@ -909,7 +916,7 @@ export function BridgePanel() {
       const session = createSession({
         userAddress: address,
         recipientAddress: dstAddr,
-        depositAddress,
+        depositAddress: depositAddress || address,
       });
 
       updateSession(session.id, {
@@ -926,10 +933,10 @@ export function BridgePanel() {
       setIsPermit2Submitting(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, tokenAddress, amount, token, routerAddr, depositAddress, recipientAddress, isDeposit, dappId, destLzEid, sourceChainId, destChainId, permit2.signPermit]);
+  }, [address, tokenAddress, amount, token, routerAddr, depositAddress, recipientAddress, isDeposit, dappId, destLzEid, sourceChainId, destChainId, onChainProtocolFee, permit2.signPermit]);
 
   const handleInitiateBridge = () => {
-    if (!address || !depositAddress) return;
+    if (!address) return;
     setError(null);
 
     // Check if user is on the right chain
@@ -945,13 +952,15 @@ export function BridgePanel() {
     }
 
     // Operator + Permit2: sign permit, send to backend
+    // Does NOT require depositAddress — backend pulls tokens directly via permit2
     if (!isSelfBridge && isPermit2) {
+      console.log("[initiate] -> handleOperatorPermit2");
       handleOperatorPermit2();
       return;
     }
 
-    // VaultFunded (both modes): create session to enter transfer step.
-    // Reset wagmi hook state so stale tx hashes from previous sessions don't leak in.
+    // VaultFunded (both modes): requires deposit address for vault transfer
+    if (!depositAddress) return;
     resetTransfer();
     resetSelfBridge();
     createSession({
@@ -1686,28 +1695,41 @@ export function BridgePanel() {
             renderErrorBanner(error || activeSession.error || "Bridge transaction failed.")
           }
 
+          {/* DEBUG */}
+          <div className="text-[9px] text-yellow-400 p-1 bg-black/50 rounded font-mono">
+            signing:{String(permit2.isSigning)} | submitting:{String(isPermit2Submitting)} |
+            needsApproval:{String(permit2.needsApproval)} | approvedOk:{String(permit2.isApprovalConfirmed)} |
+            allowance:{permit2.allowance?.toString() ?? "?"} | checkingAllowance:{String(permit2.isCheckingAllowance)} |
+            selfBridgePending:{String(isSelfBridgePending)} | waitingSelf:{String(isWaitingSelfBridge)} |
+            step:{step} | fee:{onChainProtocolFee?.toString() ?? "undef"}
+          </div>
           {/* Submit button */}
           <Button
-            onClick={handleInitiateBridge}
-            disabled={
-              !isConnected ||
-              !amount ||
-              parseFloat(amount) <= 0 ||
-              !depositAddress ||
-              isComputingDeposit ||
-              !!isLanePaused ||
-              !!isRateLimitExceeded ||
-              isBlocked ||
-              isFeeExceedsAmount ||
-              (!!recipientAddress && !/^0x[a-fA-F0-9]{40}$/.test(recipientAddress)) ||
-              (isSelfBridge && (isLzQuoteLoading || isComposeLoading)) ||
-              (isSelfBridge && !lzNativeFee) ||
-              (isPermit2 && permit2.needsApproval && !permit2.isApprovalConfirmed) ||
-              isSelfBridgePending ||
-              isWaitingSelfBridge ||
-              permit2.isSigning ||
-              isPermit2Submitting
-            }
+            onClick={() => { console.log("[BTN CLICKED]"); handleInitiateBridge(); }}
+            disabled={(() => {
+              const checks = {
+                noConn: !isConnected,
+                noAmt: !amount,
+                zeroAmt: !!(amount && parseFloat(amount) <= 0),
+                noDeposit: !isPermit2 && !depositAddress,
+                computing: !isPermit2 && isComputingDeposit,
+                paused: !!isLanePaused,
+                rateLimit: !!isRateLimitExceeded,
+                blocked: isBlocked,
+                feeExceeds: isFeeExceedsAmount,
+                badRecip: !!(recipientAddress && !/^0x[a-fA-F0-9]{40}$/.test(recipientAddress)),
+                lzLoading: isSelfBridge && (isLzQuoteLoading || isComposeLoading),
+                noLzFee: isSelfBridge && !lzNativeFee,
+                needsApproval: isPermit2 && permit2.needsApproval && !permit2.isApprovalConfirmed,
+                selfPending: isSelfBridgePending,
+                waitSelf: isWaitingSelfBridge,
+                signing: permit2.isSigning,
+                submitting: isPermit2Submitting,
+              };
+              const d = Object.values(checks).some(Boolean);
+              if (d) console.log("[BTN disabled] TRUE:", Object.entries(checks).filter(([,v]) => v).map(([k]) => k).join(", "));
+              return d;
+            })()}
             className={cn(
               "h-12 font-mono text-sm",
               isDeposit
@@ -1717,14 +1739,14 @@ export function BridgePanel() {
           >
             {!isConnected ? (
               "Connect Wallet First"
-            ) : isComputingDeposit ? (
+            ) : !isPermit2 && isComputingDeposit ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Computing Address...
               </span>
-            ) : isComputeError ? (
+            ) : !isPermit2 && isComputeError ? (
               "Address Error -- Retry Above"
-            ) : !depositAddress ? (
+            ) : !isPermit2 && !depositAddress ? (
               "Waiting for Address..."
             ) : isLanePaused ? (
               "Lane Paused"
