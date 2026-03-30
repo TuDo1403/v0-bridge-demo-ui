@@ -16,7 +16,7 @@ import {
 } from "viem";
 import { useBridgeStore } from "@/lib/bridge-store";
 import { riseGlobalDepositAbi, riseGlobalWithdrawAbi, erc20Abi, oftConversionRateAbi } from "@/lib/abi";
-import { CHAINS, chainIdToEid } from "@/config/chains";
+import { CHAINS, BRIDGE_ROUTES_BY_NETWORK, chainIdToEid } from "@/config/chains";
 import { useDepositAddress } from "@/hooks/use-deposit-address";
 import { useLzQuote } from "@/hooks/use-lz-quote";
 import { usePermit2 } from "@/hooks/use-permit2";
@@ -1347,6 +1347,35 @@ export function BridgePanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manualTxHash, activeSession, address, depositAddress, publicClient, authorativeComposeMsg]);
 
+  // Available routes for the current network — drives chain selectors
+  const routes = useMemo(() => BRIDGE_ROUTES_BY_NETWORK[network] ?? [], [network]);
+  const availableSourceChains = useMemo(() => {
+    const ids = [...new Set(routes.map((r) => r.sourceChainId))];
+    return ids.map((id) => CHAINS[id]).filter(Boolean);
+  }, [routes]);
+  const availableDestChains = useMemo(() => {
+    return routes
+      .filter((r) => r.sourceChainId === sourceChainId)
+      .map((r) => CHAINS[r.destChainId])
+      .filter(Boolean);
+  }, [routes, sourceChainId]);
+
+  const handleSourceChainChange = useCallback((chainId: string) => {
+    const id = Number(chainId);
+    setSourceChainId(id);
+    // Auto-select the first matching destination
+    const match = routes.find((r) => r.sourceChainId === id);
+    if (match) setDestChainId(match.destChainId);
+    setDepositAddress(""); // reset vault address
+    setError(null);
+  }, [routes, setSourceChainId, setDestChainId, setDepositAddress]);
+
+  const handleDestChainChange = useCallback((chainId: string) => {
+    setDestChainId(Number(chainId));
+    setDepositAddress("");
+    setError(null);
+  }, [setDestChainId, setDepositAddress]);
+
   const handleSwapDirection = () => {
     setError(null);
     swapDirection();
@@ -1461,10 +1490,34 @@ export function BridgePanel() {
               From
             </label>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              <div className="flex items-center gap-2 w-full sm:w-52 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm font-mono">
-                <ChainIcon chainKey={sourceChain?.iconKey} className="h-4 w-4" />
-                <span>{sourceChain?.label}</span>
-              </div>
+              {availableSourceChains.length > 1 ? (
+                <Select
+                  value={String(sourceChainId)}
+                  onValueChange={handleSourceChainChange}
+                >
+                  <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
+                    <span className="flex items-center gap-2">
+                      <ChainIcon chainKey={sourceChain?.iconKey} className="h-4 w-4" />
+                      {sourceChain?.label}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableSourceChains.map((c) => (
+                      <SelectItem key={c.chain.id} value={String(c.chain.id)} className="font-mono text-sm">
+                        <span className="flex items-center gap-2">
+                          <ChainIcon chainKey={c.iconKey} className="h-4 w-4" />
+                          {c.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex items-center gap-2 w-full sm:w-52 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm font-mono">
+                  <ChainIcon chainKey={sourceChain?.iconKey} className="h-4 w-4" />
+                  <span>{sourceChain?.label}</span>
+                </div>
+              )}
 
               <Select
                 value={tokenKey}
@@ -1579,10 +1632,34 @@ export function BridgePanel() {
             <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2 block">
               To
             </label>
-            <div className="flex items-center gap-2 w-full sm:w-52 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm font-mono">
-              <ChainIcon chainKey={destChain?.iconKey} className="h-4 w-4" />
-              <span>{destChain?.label}</span>
-            </div>
+            {availableDestChains.length > 1 ? (
+              <Select
+                value={String(destChainId)}
+                onValueChange={handleDestChainChange}
+              >
+                <SelectTrigger className="w-full sm:w-52 bg-muted/50 font-mono text-sm">
+                  <span className="flex items-center gap-2">
+                    <ChainIcon chainKey={destChain?.iconKey} className="h-4 w-4" />
+                    {destChain?.label}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  {availableDestChains.map((c) => (
+                    <SelectItem key={c.chain.id} value={String(c.chain.id)} className="font-mono text-sm">
+                      <span className="flex items-center gap-2">
+                        <ChainIcon chainKey={c.iconKey} className="h-4 w-4" />
+                        {c.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="flex items-center gap-2 w-full sm:w-52 px-3 py-2 rounded-md bg-muted/50 border border-border text-sm font-mono">
+                <ChainIcon chainKey={destChain?.iconKey} className="h-4 w-4" />
+                <span>{destChain?.label}</span>
+              </div>
+            )}
 
             {/* Receive amount preview */}
             {amount && parseFloat(amount) > 0 && (

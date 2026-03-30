@@ -1,5 +1,5 @@
 import { type Chain } from "viem";
-import { mainnet } from "viem/chains";
+import { mainnet, baseSepolia } from "viem/chains";
 import type { NetworkId } from "@/lib/network-store";
 
 /* ------------------------------------------------------------------ */
@@ -23,6 +23,18 @@ export const sepoliaChain: Chain = {
     default: { name: "Etherscan", url: "https://sepolia.etherscan.io" },
   },
   testnet: true,
+};
+
+export const BASE_SEPOLIA_RPC_URLS = [
+  process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ?? "https://base-sepolia-rpc.publicnode.com",
+  "https://sepolia.base.org",
+];
+
+export const baseSepoliaChain: Chain = {
+  ...baseSepolia,
+  rpcUrls: {
+    default: { http: [BASE_SEPOLIA_RPC_URLS[0]] },
+  },
 };
 
 export const RISE_TESTNET_RPC_URL =
@@ -101,6 +113,15 @@ export const CHAINS: Record<number, ChainMeta> = {
     explorerTxUrl: (h) => `https://sepolia.etherscan.io/tx/${h}`,
     network: "testnet",
   },
+  [baseSepoliaChain.id]: {
+    chain: baseSepoliaChain,
+    lzEid: 40245,
+    label: "Base Sepolia",
+    shortLabel: "BASE",
+    iconKey: "base",
+    explorerTxUrl: (h) => `https://sepolia.basescan.org/tx/${h}`,
+    network: "testnet",
+  },
   [riseTestnetChain.id]: {
     chain: riseTestnetChain,
     lzEid: 40438,
@@ -151,9 +172,19 @@ export const BRIDGE_ROUTES_BY_NETWORK: Record<NetworkId, BridgeRoute[]> = {
       label: "Sepolia -> RISE Testnet",
     },
     {
+      sourceChainId: baseSepoliaChain.id,
+      destChainId: riseTestnetChain.id,
+      label: "Base Sepolia -> RISE Testnet",
+    },
+    {
       sourceChainId: riseTestnetChain.id,
       destChainId: sepoliaChain.id,
       label: "RISE Testnet -> Sepolia",
+    },
+    {
+      sourceChainId: riseTestnetChain.id,
+      destChainId: baseSepoliaChain.id,
+      label: "RISE Testnet -> Base Sepolia",
     },
   ],
   mainnet: [
@@ -243,7 +274,8 @@ export const REQUIRED_CONFIRMATIONS: Record<number, number> = {
   [riseMainnetChain.id]: 900,      // RISE → ETH: 900 RISE blocks
   // Testnet
   [sepoliaChain.id]: 15,           // Sepolia → RISE Testnet
-  [riseTestnetChain.id]: 900,      // RISE Testnet → Sepolia
+  [baseSepoliaChain.id]: 1,        // Base Sepolia → RISE Testnet
+  [riseTestnetChain.id]: 900,      // RISE Testnet → Sepolia / Base Sepolia
 };
 
 /** Average block time in seconds, used to estimate ETA */
@@ -251,5 +283,6 @@ export const BLOCK_TIME_SECONDS: Record<number, number> = {
   [ethereumMainnetChain.id]: 12,
   [riseMainnetChain.id]: 1,
   [sepoliaChain.id]: 12,
+  [baseSepoliaChain.id]: 2,
   [riseTestnetChain.id]: 1,
 };

@@ -1,5 +1,6 @@
 import { type Address } from "viem";
 import { RISE_CHAIN_IDS } from "@/lib/network-store";
+import { baseSepoliaChain } from "@/config/chains";
 
 /* ------------------------------------------------------------------ */
 /*  Permit2 canonical address (same on all chains)                     */
@@ -37,6 +38,7 @@ export const TOKENS: Record<string, TokenMeta> = {
     addresses: {
       // Testnet
       11155111: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+      [baseSepoliaChain.id]: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
       11155931: "0x6bf6e258b3c5650b448cb1112835048ba5619dc1",
       // Mainnet
       1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -64,6 +66,10 @@ export const CONTRACTS: Record<number, ChainContracts> = {
   11155111: {
     globalDeposit: "0x7d09ed69FE463012D99bED997C381304B70CC9cc",
     lockReleaseOFT: "0x3e48337D4614f1A79ca72D39BE50c4BFa0901318",
+  },
+  // Testnet — Base Sepolia
+  [baseSepoliaChain.id]: {
+    globalDeposit: "0x708A2705C095937F37A07944B9ce543A6213C738",
   },
   // Testnet — RISE Testnet
   11155931: {

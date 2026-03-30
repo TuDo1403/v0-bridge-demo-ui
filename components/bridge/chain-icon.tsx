@@ -38,8 +38,26 @@ function RiseIcon({ className }: { className?: string }) {
   );
 }
 
+function BaseIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 111 111"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="55.5" cy="55.5" r="55.5" fill="#0052FF" />
+      <path
+        d="M55.5 95C77.315 95 95 77.315 95 55.5C95 33.685 77.315 16 55.5 16C34.874 16 18.076 31.693 16.18 51.5H67.5V59.5H16.18C18.076 79.307 34.874 95 55.5 95Z"
+        fill="white"
+      />
+    </svg>
+  );
+}
+
 const CHAIN_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   ethereum: EthereumIcon,
+  base: BaseIcon,
   rise: RiseIcon,
 };
 
