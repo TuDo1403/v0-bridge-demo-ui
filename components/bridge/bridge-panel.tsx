@@ -20,6 +20,7 @@ import { CHAINS, chainIdToEid } from "@/config/chains";
 import { useDepositAddress } from "@/hooks/use-deposit-address";
 import { useLzQuote } from "@/hooks/use-lz-quote";
 import { usePermit2 } from "@/hooks/use-permit2";
+import { useEIP2612 } from "@/hooks/use-eip2612";
 import { useComposeMsg } from "@/hooks/use-compose-msg";
 import { DappSelector } from "./dapp-selector";
 import { BridgeModeToggle } from "./bridge-mode-toggle";
@@ -127,8 +128,8 @@ export function BridgePanel() {
     }
 
     // Transfer in progress (pre-bridge) — only for vault-funded flows.
-    // Permit2 sessions skip the transfer step entirely (sign → backend → polling).
-    if (activeSession.transferMode !== "permit2" &&
+    // Permit sessions skip the transfer step entirely (sign → backend → polling).
+    if (activeSession.transferMode !== "permit2" && activeSession.transferMode !== "eip2612" && activeSession.transferMode !== "permit" &&
         (s === "awaiting_transfer" || s === "transfer_submitted" ||
         s === "transfer_mined" || s === "deposit_verified")) {
       return "transfer";
@@ -136,7 +137,7 @@ export function BridgePanel() {
 
     // Has user transfer tx hash but no bridge tracking context = show tracking
     // (e.g. operator vault-funded session waiting for backend submission)
-    if (activeSession.userTransferTxHash && activeSession.userTransferTxHash !== "permit2" &&
+    if (activeSession.userTransferTxHash && activeSession.userTransferTxHash !== "permit2" && activeSession.userTransferTxHash !== "permit" &&
         s !== "idle") {
       return "polling";
     }
@@ -154,11 +155,11 @@ export function BridgePanel() {
   const [showRecipient, setShowRecipient] = useState(false);
   const [manualTxHash, setManualTxHash] = useState("");
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
-  const [isPermit2Submitting, setIsPermit2Submitting] = useState(false);
+  const [isPermitSubmitting, setIsPermitSubmitting] = useState(false);
 
   // Reset stuck permit2 submitting state when user changes form inputs
   useEffect(() => {
-    setIsPermit2Submitting(false);
+    setIsPermitSubmitting(false);
   }, [amount, tokenKey, sourceChainId, destChainId, transferMode, bridgeMode]);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -191,7 +192,7 @@ export function BridgePanel() {
     const hasTrackingContext = !!(
       activeSession.jobId || activeSession.selfBridgeTxHash ||
       activeSession.backendProcessTxHash ||
-      (activeSession.userTransferTxHash && activeSession.userTransferTxHash !== "permit2")
+      (activeSession.userTransferTxHash && activeSession.userTransferTxHash !== "permit2" && activeSession.userTransferTxHash !== "permit")
     );
     const isProcessingStatus = [
       "bridge_submitted", "bridge_mined", "source_verified",
@@ -305,11 +306,25 @@ export function BridgePanel() {
     }
   }, [computedDepositAddr, setDepositAddress]);
 
+  // --- EIP-2612 hook (detection + signing) — must be before effectiveTransferMode ---
+  const eip2612 = useEIP2612({
+    sourceChainId,
+    tokenKey,
+    enabled: true, // always detect so we can show/hide the option
+  });
+
   // Use session's mode when a session is active; fall back to store (form) mode
   const effectiveBridgeMode = activeSession?.bridgeMode ?? bridgeMode;
-  const effectiveTransferMode = activeSession?.transferMode ?? transferMode;
+  const baseTransferMode = activeSession?.transferMode ?? transferMode;
+  // Auto-reset: if token doesn't support EIP-2612, fall back to vault
+  const effectiveTransferMode =
+    !eip2612?.supportsEIP2612 && baseTransferMode === "eip2612"
+      ? "vault"
+      : baseTransferMode;
   const isSelfBridge = effectiveBridgeMode === "self";
   const isPermit2 = effectiveTransferMode === "permit2";
+  const isEIP2612 = effectiveTransferMode === "eip2612";
+  const isPermitMode = isPermit2 || isEIP2612;
 
   // Session has funded vault but not yet bridged — needs LZ quote regardless of store bridgeMode
   // Only for self-bridge mode: operator mode submits to backend, not self-bridge
@@ -1011,7 +1026,7 @@ export function BridgePanel() {
     }
     console.log("[operator-permit2] proceeding to sign");
     setError(null);
-    setIsPermit2Submitting(true);
+    setIsPermitSubmitting(true);
 
     try {
       const parsedAmt = parseUnits(amount, token.decimals);
@@ -1069,10 +1084,83 @@ export function BridgePanel() {
       const msg = err instanceof Error ? err.message : "Permit2 signing failed";
       setError(msg.length > 200 ? msg.slice(0, 200) + "..." : msg);
     } finally {
-      setIsPermit2Submitting(false);
+      setIsPermitSubmitting(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, tokenAddress, amount, token, routerAddr, depositAddress, recipientAddress, isDeposit, dappId, destLzEid, sourceChainId, destChainId, onChainProtocolFee, permit2.signPermit]);
+
+  /** Self-bridge + EIP-2612: sign token permit and bridge in one flow */
+  const handleEIP2612Bridge = useCallback(async () => {
+    if (!address || !tokenAddress || !amount || !token || !routerAddr) return;
+    setError(null);
+
+    try {
+      const parsedAmt = parseUnits(amount, token.decimals);
+
+      const permitData = await eip2612.signPermit({
+        amount: parsedAmt,
+        spender: routerAddr,
+      });
+
+      await handleSelfBridge(permitData);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "EIP-2612 signing failed";
+      setError(msg.length > 200 ? msg.slice(0, 200) + "..." : msg);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, tokenAddress, amount, token, routerAddr, eip2612.signPermit, handleSelfBridge]);
+
+  /** Operator + EIP-2612: sign token permit, send to backend */
+  const handleOperatorEIP2612 = useCallback(async () => {
+    if (!address || !tokenAddress || !amount || !token || !routerAddr) return;
+    setError(null);
+    setIsPermitSubmitting(true);
+
+    try {
+      const parsedAmt = parseUnits(amount, token.decimals);
+      const dstAddr = (recipientAddress || address) as Address;
+
+      const permitData = await eip2612.signPermit({
+        amount: parsedAmt,
+        spender: routerAddr,
+      });
+
+      const res = await submitPermit({
+        srcEid: chainIdToEid(sourceChainId),
+        dstEid: chainIdToEid(destChainId),
+        token: tokenAddress,
+        sender: address,
+        receiver: dstAddr,
+        amount: parsedAmt.toString(),
+        dappId,
+        permit: {
+          type: 3,
+          deadline: permitData.deadline.toString(),
+          signature: permitData.signature,
+        },
+      }, network);
+
+      const session = createSession({
+        userAddress: address,
+        recipientAddress: dstAddr,
+        depositAddress: depositAddress || address,
+      });
+
+      updateSession(session.id, {
+        status: mapBackendStatus(res.status),
+        jobId: res.jobId,
+        userTransferTxHash: "permit",
+      });
+
+      startPolling(res.jobId, session.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "EIP-2612 signing failed";
+      setError(msg.length > 200 ? msg.slice(0, 200) + "..." : msg);
+    } finally {
+      setIsPermitSubmitting(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, tokenAddress, amount, token, routerAddr, depositAddress, recipientAddress, dappId, sourceChainId, destChainId, eip2612.signPermit]);
 
   const handleInitiateBridge = () => {
     if (!address) return;
@@ -1081,6 +1169,18 @@ export function BridgePanel() {
     // Check if user is on the right chain
     if (walletChainId !== sourceChainId) {
       switchChain({ chainId: sourceChainId });
+      return;
+    }
+
+    // Self-bridge + EIP-2612: sign token permit and bridge in one flow
+    if (isSelfBridge && isEIP2612) {
+      handleEIP2612Bridge();
+      return;
+    }
+
+    // Operator + EIP-2612: sign permit, send to backend
+    if (!isSelfBridge && isEIP2612) {
+      handleOperatorEIP2612();
       return;
     }
 
@@ -1564,6 +1664,7 @@ export function BridgePanel() {
               transferMode={transferMode}
               onTransferModeChange={setTransferMode}
               showTransferMode={true}
+              supportsEIP2612={eip2612.supportsEIP2612}
             />
           )}
 
@@ -1841,7 +1942,7 @@ export function BridgePanel() {
 
           {/* DEBUG */}
           <div className="text-[9px] text-yellow-400 p-1 bg-black/50 rounded font-mono">
-            signing:{String(permit2.isSigning)} | submitting:{String(isPermit2Submitting)} |
+            signing:{String(permit2.isSigning)} | submitting:{String(isPermitSubmitting)} |
             needsApproval:{String(permit2.needsApproval)} | approvedOk:{String(permit2.isApprovalConfirmed)} |
             allowance:{permit2.allowance?.toString() ?? "?"} | checkingAllowance:{String(permit2.isCheckingAllowance)} |
             selfBridgePending:{String(isSelfBridgePending)} | waitingSelf:{String(isWaitingSelfBridge)} |
@@ -1855,8 +1956,8 @@ export function BridgePanel() {
                 noConn: !isConnected,
                 noAmt: !amount,
                 zeroAmt: !!(amount && parseFloat(amount) <= 0),
-                noDeposit: !isPermit2 && !depositAddress,
-                computing: !isPermit2 && isComputingDeposit,
+                noDeposit: !isPermitMode && !depositAddress,
+                computing: !isPermitMode && isComputingDeposit,
                 paused: !!isLanePaused,
                 rateLimit: !!isRateLimitExceeded,
                 blocked: isBlocked,
@@ -1867,8 +1968,8 @@ export function BridgePanel() {
                 needsApproval: isPermit2 && permit2.needsApproval && !permit2.isApprovalConfirmed,
                 selfPending: isSelfBridgePending,
                 waitSelf: isWaitingSelfBridge,
-                signing: permit2.isSigning,
-                submitting: isPermit2Submitting,
+                signing: permit2.isSigning || eip2612.isSigning,
+                submitting: isPermitSubmitting,
               };
               const d = Object.values(checks).some(Boolean);
               if (d) console.log("[BTN disabled] TRUE:", Object.entries(checks).filter(([,v]) => v).map(([k]) => k).join(", "));
@@ -1883,14 +1984,14 @@ export function BridgePanel() {
           >
             {!isConnected ? (
               "Connect Wallet First"
-            ) : !isPermit2 && isComputingDeposit ? (
+            ) : !isPermitMode && isComputingDeposit ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Computing Address...
               </span>
-            ) : !isPermit2 && isComputeError ? (
+            ) : !isPermitMode && isComputeError ? (
               "Address Error -- Retry Above"
-            ) : !isPermit2 && !depositAddress ? (
+            ) : !isPermitMode && !depositAddress ? (
               "Waiting for Address..."
             ) : isLanePaused ? (
               "Lane Paused"
@@ -1911,15 +2012,20 @@ export function BridgePanel() {
               "Waiting for LZ Quote..."
             ) : isPermit2 && permit2.needsApproval && !permit2.isApprovalConfirmed ? (
               "Approve Permit2 First"
+            ) : eip2612.isSigning ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Sign Token Permit...
+              </span>
             ) : permit2.isSigning ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Sign Permit2...
               </span>
-            ) : isPermit2Submitting ? (
+            ) : isPermitSubmitting ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Submitting Permit2...
+                Submitting...
               </span>
             ) : isSelfBridgePending ? (
               <span className="flex items-center gap-2">

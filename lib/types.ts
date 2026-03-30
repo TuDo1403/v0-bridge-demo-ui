@@ -91,7 +91,7 @@ export interface VaultFundedRequest {
   dappId: number;
 }
 
-/* -- Request: permit2 flow (user signed an EIP-712 permit) -- */
+/* -- Request: permit flow (Permit2, PermitRelay, or EIP-2612) -- */
 export interface PermitProcessRequest {
   srcEid: number;
   dstEid: number;
@@ -101,9 +101,10 @@ export interface PermitProcessRequest {
   amount: string;
   dappId: number;
   permit: {
-    target: string;
+    type?: number;    // 1=Permit2 (default), 2=PermitRelay, 3=PermitEIP2612
+    target?: string;  // required for type 1 & 2, unused for type 3
     deadline: string;
-    nonce: string;
+    nonce?: string;   // required for type 1 & 2, unused for type 3
     signature: string;
   };
 }
@@ -205,8 +206,8 @@ export interface BridgeSession {
   dappId?: number;
   /** Bridge mode: operator-sponsored or self-bridge */
   bridgeMode?: "operator" | "self";
-  /** Transfer mode: vault-funded or permit2 */
-  transferMode?: "vault" | "permit2";
+  /** Transfer mode: vault-funded, permit2, or eip2612 */
+  transferMode?: "vault" | "permit2" | "eip2612";
   /** Self-bridge tx hash (deposit()/withdraw() call) */
   selfBridgeTxHash?: string;
   userTransferTxHash?: string;

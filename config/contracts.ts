@@ -14,7 +14,7 @@ export const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as A
 /** Who pays cross-chain (LZ) gas */
 export type BridgeMode = "operator" | "self";
 /** How tokens move from user to the contract */
-export type TransferMode = "vault" | "permit2";
+export type TransferMode = "vault" | "permit2" | "eip2612";
 
 /* ------------------------------------------------------------------ */
 /*  Token definitions                                                  */

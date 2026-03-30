@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import type { BridgeMode, TransferMode } from "@/config/contracts";
-import { Zap, Shield, FileSignature, ArrowRightLeft } from "lucide-react";
+import { Zap, Shield, FileSignature, ArrowRightLeft, Stamp } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
 /*  Bridge Mode Toggle (Operator vs Self-bridge)                       */
@@ -15,6 +15,8 @@ interface BridgeModeToggleProps {
   onTransferModeChange: (mode: TransferMode) => void;
   /** Show transfer mode selector (only relevant for self-bridge) */
   showTransferMode: boolean;
+  /** Whether the selected token supports EIP-2612 native permit */
+  supportsEIP2612?: boolean;
 }
 
 export function BridgeModeToggle({
@@ -23,6 +25,7 @@ export function BridgeModeToggle({
   transferMode,
   onTransferModeChange,
   showTransferMode,
+  supportsEIP2612 = false,
 }: BridgeModeToggleProps) {
   return (
     <div className="flex flex-col gap-2">
@@ -72,7 +75,10 @@ export function BridgeModeToggle({
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
             Transfer Method
           </span>
-          <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-muted/30 border border-border/50">
+          <div className={cn(
+            "grid gap-1 p-0.5 rounded-lg bg-muted/30 border border-border/50",
+            supportsEIP2612 ? "grid-cols-3" : "grid-cols-2"
+          )}>
             <button
               type="button"
               onClick={() => onTransferModeChange("vault")}
@@ -99,15 +105,37 @@ export function BridgeModeToggle({
               <FileSignature className="h-3 w-3" />
               Permit2
             </button>
+            {supportsEIP2612 && (
+              <button
+                type="button"
+                onClick={() => onTransferModeChange("eip2612")}
+                className={cn(
+                  "flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-mono transition-all",
+                  transferMode === "eip2612"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Stamp className="h-3 w-3" />
+                Permit
+              </button>
+            )}
           </div>
           <span className="text-[10px] font-mono text-muted-foreground/60 px-0.5">
-            {transferMode === "vault"
-              ? bridgeMode === "operator"
-                ? "Transfer tokens to vault. Backend bridges for you."
-                : "Transfer tokens to vault, then bridge (2 txs)."
-              : bridgeMode === "operator"
-                ? "Sign a permit. Backend pulls tokens and bridges."
-                : "Sign once, bridge in one tx. Requires Permit2 approval."}
+            {({
+              vault: {
+                operator: "Transfer tokens to vault. Backend bridges for you.",
+                self: "Transfer tokens to vault, then bridge (2 txs).",
+              },
+              permit2: {
+                operator: "Sign a permit. Backend pulls tokens and bridges.",
+                self: "Sign once, bridge in one tx. Requires Permit2 approval.",
+              },
+              eip2612: {
+                operator: "Sign a token permit. No approval needed.",
+                self: "Sign once, bridge in one tx. No approval needed.",
+              },
+            } as Record<string, Record<string, string>>)[transferMode]?.[bridgeMode] ?? ""}
           </span>
         </div>
       )}
