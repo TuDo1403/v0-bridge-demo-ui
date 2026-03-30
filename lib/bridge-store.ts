@@ -181,10 +181,16 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
     }
     const sessions = current.map((s) => {
       if (s.id !== id) return s;
-      // Deep-merge lzTracking so we never lose fields
+      // Deep-merge lzTracking and returnLeg so we never lose fields
       const merged = { ...s, ...updates };
       if (updates.lzTracking && s.lzTracking) {
         merged.lzTracking = { ...s.lzTracking, ...updates.lzTracking };
+      }
+      if (updates.returnLeg && s.returnLeg) {
+        merged.returnLeg = { ...s.returnLeg, ...updates.returnLeg };
+        if (updates.returnLeg.lzTracking && s.returnLeg.lzTracking) {
+          merged.returnLeg.lzTracking = { ...s.returnLeg.lzTracking, ...updates.returnLeg.lzTracking };
+        }
       }
       return merged;
     });
@@ -196,6 +202,12 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
       updatedActive = { ...active, ...updates };
       if (updates.lzTracking && active.lzTracking) {
         updatedActive!.lzTracking = { ...active.lzTracking, ...updates.lzTracking };
+      }
+      if (updates.returnLeg && active.returnLeg) {
+        updatedActive!.returnLeg = { ...active.returnLeg, ...updates.returnLeg };
+        if (updates.returnLeg.lzTracking && active.returnLeg.lzTracking) {
+          updatedActive!.returnLeg!.lzTracking = { ...active.returnLeg.lzTracking, ...updates.returnLeg.lzTracking };
+        }
       }
     }
 

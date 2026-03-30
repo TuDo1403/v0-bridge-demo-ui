@@ -26,16 +26,24 @@ import { BridgeModeToggle } from "./bridge-mode-toggle";
 import {
   TOKENS,
   SUPPORTED_TOKEN_KEYS,
-  getTokenAddress,
+  getTokenAddress as getTokenAddressFallback,
   getGlobalDepositAddress,
   getGlobalWithdrawAddress,
   getBridgeDirection,
+  isRoundTripDapp as isRoundTripFallback,
 } from "@/config/contracts";
+import {
+  useBridgeConfig,
+  isDappRoundTrip,
+  getTokenOptions,
+  resolveTokenAddress,
+} from "@/lib/bridge-config";
 import {
   submitVaultFunded,
   submitPermit,
   pollBridgeStatus,
   pollLzScan,
+  lookupByTxHash,
   isTerminalStatus,
 } from "@/lib/bridge-service";
 import { useNetworkStore } from "@/lib/network-store";
@@ -73,6 +81,7 @@ export function BridgePanel() {
   const { switchChain } = useSwitchChain();
   const publicClient = usePublicClient();
   const network = useNetworkStore((s) => s.network);
+  const { config: bridgeConfig } = useBridgeConfig();
 
   const {
     sourceChainId,
@@ -154,6 +163,7 @@ export function BridgePanel() {
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lzPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const returnLegRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load recent sessions on mount
   useEffect(() => {
@@ -167,6 +177,7 @@ export function BridgePanel() {
     // Clear any lingering polling from a previous session when session changes
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
     if (lzPollingRef.current) { clearInterval(lzPollingRef.current); lzPollingRef.current = null; }
+    if (returnLegRef.current) { clearInterval(returnLegRef.current); returnLegRef.current = null; }
 
     if (!activeSession) return;
 
@@ -205,13 +216,22 @@ export function BridgePanel() {
     // Covers both self-bridge (selfBridgeTxHash) and operator-mode (backendProcessTxHash)
     // where backend already confirmed but LZ delivery is still pending.
     const lzTxHash = activeSession.selfBridgeTxHash ?? activeSession.backendProcessTxHash;
-    if (lzTxHash && !isTerminalStatus(s) && s !== "completed") {
+    if (lzTxHash && !isTerminalStatus(s) && s !== "completed" && !s.startsWith("roundtrip_")) {
       startLzPolling(lzTxHash, activeSession.id, activeSession.dappId ?? 0);
+    }
+
+    // Resume return-leg polling for roundtrip sessions
+    if (s.startsWith("roundtrip_") && s !== "roundtrip_completed") {
+      const composeTx = activeSession.lzTracking?.composeTxHash;
+      if (composeTx) {
+        startReturnLegPolling(composeTx, activeSession.id);
+      }
     }
 
     return () => {
       if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
       if (lzPollingRef.current) { clearInterval(lzPollingRef.current); lzPollingRef.current = null; }
+      if (returnLegRef.current) { clearInterval(returnLegRef.current); returnLegRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSession?.id, sessionSelectedAt]);
@@ -220,8 +240,31 @@ export function BridgePanel() {
   const globalDepositAddr = getGlobalDepositAddress(sourceChainId);
   const globalWithdrawAddr = getGlobalWithdrawAddress(sourceChainId);
   const routerAddr = isDeposit ? globalDepositAddr : globalWithdrawAddr;
-  const tokenAddress = getTokenAddress(tokenKey, sourceChainId);
-  const token = TOKENS[tokenKey];
+
+  // Dynamic token list from backend config, with hardcoded fallback
+  const srcEid = chainIdToEid(sourceChainId);
+  const dstEid = chainIdToEid(destChainId);
+  const dynamicTokens = useMemo(
+    () => getTokenOptions(bridgeConfig, srcEid, dstEid),
+    [bridgeConfig, srcEid, dstEid]
+  );
+  const availableTokenKeys = dynamicTokens.length > 0
+    ? dynamicTokens.map((t) => t.key)
+    : SUPPORTED_TOKEN_KEYS;
+  // Auto-select first available token if current tokenKey is not in the list
+  useEffect(() => {
+    if (availableTokenKeys.length > 0 && !availableTokenKeys.includes(tokenKey)) {
+      setTokenKey(availableTokenKeys[0]);
+    }
+  }, [availableTokenKeys, tokenKey, setTokenKey]);
+
+  const tokenAddress = (
+    resolveTokenAddress(bridgeConfig, tokenKey, srcEid) ??
+    getTokenAddressFallback(tokenKey, sourceChainId)
+  ) as `0x${string}` | undefined;
+  const token = TOKENS[tokenKey] ?? (dynamicTokens.find((t) => t.key === tokenKey)
+    ? { symbol: dynamicTokens.find((t) => t.key === tokenKey)!.symbol, name: dynamicTokens.find((t) => t.key === tokenKey)!.name, decimals: dynamicTokens.find((t) => t.key === tokenKey)!.decimals, addresses: {} }
+    : undefined);
 
   // --- Read user wallet token balance ---
   const { data: walletBalance, isLoading: isBalanceLoading } = useReadContract({
@@ -623,7 +666,7 @@ export function BridgePanel() {
         srcEid: chainIdToEid(activeSession.sourceChainId),
         dstEid: chainIdToEid(activeSession.destChainId),
         userTransferTxHash: activeSession.userTransferTxHash!,
-        token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
+        token: (resolveTokenAddress(bridgeConfig, activeSession.tokenKey, chainIdToEid(activeSession.sourceChainId)) ?? getTokenAddressFallback(activeSession.tokenKey, activeSession.sourceChainId))!,
         receiver: activeSession.recipientAddress || activeSession.userAddress,
         dappId: sessionDappId,
       }, network);
@@ -710,7 +753,12 @@ export function BridgePanel() {
             } else {
               const cs = snapshot.composeStatus?.toUpperCase() ?? "";
               if (cs === "SUCCEEDED" || cs === "EXECUTED") {
-                mappedStatus = "completed";
+                // Round-trip dapps: compose succeeded but need to track the return bridge
+                if (isDappRoundTrip(bridgeConfig, sessionDappId) || isRoundTripFallback(sessionDappId)) {
+                  mappedStatus = "roundtrip_pending";
+                } else {
+                  mappedStatus = "completed";
+                }
               } else if (cs === "FAILED") {
                 mappedStatus = "failed";
               } else {
@@ -728,8 +776,9 @@ export function BridgePanel() {
           // Don't let LZ polling downgrade an already-completed session.
           // Backend polling may have set "completed" before LZ Scan indexes compose status.
           // Keep polling to enrich lzTracking data (guid, dstTxHash, compose) — just don't touch status.
+          // Exception: roundtrip_pending MUST override "completed" (leg 1 done, leg 2 starting).
           const currentStatus = useBridgeStore.getState().activeSession?.status;
-          const isAlreadyComplete = currentStatus === "completed";
+          const isAlreadyComplete = currentStatus === "completed" && mappedStatus !== "roundtrip_pending";
 
           updateSession(sessionId, {
             ...(isAlreadyComplete ? {} : { status: mappedStatus }),
@@ -742,6 +791,7 @@ export function BridgePanel() {
           const isLzTerminal =
             mappedStatus === "completed" ||
             mappedStatus === "failed" ||
+            mappedStatus === "roundtrip_pending" ||
             // For already-completed sessions: stop once LZ itself is delivered and compose is resolved
             (isAlreadyComplete && lzStatus === "lz_delivered" && (
               sessionDappId === 0 ||
@@ -760,6 +810,11 @@ export function BridgePanel() {
                 setError("LZ message delivery failed.");
               }
             }
+
+            // Start return-leg tracking for round-trip dapps
+            if (mappedStatus === "roundtrip_pending" && snapshot.composeTxHash) {
+              startReturnLegPolling(snapshot.composeTxHash, sessionId);
+            }
           }
         } catch {
           // Polling error, will retry on next tick
@@ -767,6 +822,90 @@ export function BridgePanel() {
       }, 6000);
     },
     [updateSession]
+  );
+
+  /**
+   * Round-trip return-leg polling (dappId 2).
+   * Phase 1: Poll backend by compose TX hash until the return withdrawal job is found.
+   * Phase 2: Poll LZ Scan for the return bridge TX until delivered on home.
+   */
+  const startReturnLegPolling = useCallback(
+    (composeTxHash: string, sessionId: string) => {
+      if (returnLegRef.current) clearInterval(returnLegRef.current);
+
+      let phase: "find_job" | "poll_lz" = "find_job";
+      let returnBridgeTxHash: string | undefined;
+
+      returnLegRef.current = setInterval(async () => {
+        try {
+          if (phase === "find_job") {
+            // Look up the return withdrawal job by the compose TX hash.
+            // The backend auto-creates this when ERC20TransferConsumer detects
+            // the share transfer to the vault clone.
+            const result = await lookupByTxHash(composeTxHash, network);
+            if (!result) return; // Not created yet, keep polling
+
+            updateSession(sessionId, {
+              returnLeg: {
+                jobId: result.job_id,
+                bridgeTxHash: result.bridge_tx_hash || undefined,
+              },
+            });
+
+            // If the return job already failed, stop polling
+            if (result.status === "failed") {
+              updateSession(sessionId, { status: "failed" });
+              setError("Return bridge failed. Check the job in backend logs.");
+              if (returnLegRef.current) clearInterval(returnLegRef.current);
+              returnLegRef.current = null;
+              return;
+            }
+
+            if (!result.bridge_tx_hash) {
+              // Job exists but no bridge TX yet — update status, keep polling
+              updateSession(sessionId, { status: "roundtrip_bridging" });
+              return;
+            }
+
+            returnBridgeTxHash = result.bridge_tx_hash;
+            updateSession(sessionId, { status: "roundtrip_bridging" });
+            phase = "poll_lz";
+          }
+
+          if (phase === "poll_lz" && returnBridgeTxHash) {
+            const snapshot = await pollLzScan(returnBridgeTxHash, network);
+            if (!snapshot) return; // Not indexed yet
+
+            const lzStatus = snapshot.lzStatus ?? "";
+            let status: BridgeStatus = "roundtrip_bridging";
+
+            if (lzStatus === "lz_delivered") {
+              status = "roundtrip_completed";
+            } else if (lzStatus === "lz_inflight") {
+              status = "roundtrip_inflight";
+            } else if (lzStatus === "lz_failed" || lzStatus === "lz_blocked") {
+              status = "failed";
+            }
+
+            updateSession(sessionId, {
+              status,
+              returnLeg: { lzTracking: snapshot },
+            });
+
+            if (status === "roundtrip_completed" || status === "failed") {
+              if (returnLegRef.current) clearInterval(returnLegRef.current);
+              returnLegRef.current = null;
+              if (status === "failed") {
+                setError("Return bridge delivery failed.");
+              }
+            }
+          }
+        } catch {
+          // Polling error, will retry on next tick
+        }
+      }, 6000);
+    },
+    [updateSession, network]
   );
 
   // --- Handlers ---
@@ -1081,7 +1220,7 @@ export function BridgePanel() {
         srcEid: chainIdToEid(activeSession.sourceChainId),
         dstEid: chainIdToEid(activeSession.destChainId),
         userTransferTxHash: hash,
-        token: getTokenAddress(activeSession.tokenKey, activeSession.sourceChainId)!,
+        token: (resolveTokenAddress(bridgeConfig, activeSession.tokenKey, chainIdToEid(activeSession.sourceChainId)) ?? getTokenAddressFallback(activeSession.tokenKey, activeSession.sourceChainId))!,
         receiver: activeSession.recipientAddress || activeSession.userAddress,
         dappId: sessionDappId,
       }, network);
@@ -1235,7 +1374,10 @@ export function BridgePanel() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {SUPPORTED_TOKEN_KEYS.map((k) => (
+                  {availableTokenKeys.map((k) => {
+                    const dt = dynamicTokens.find((t) => t.key === k);
+                    const symbol = dt?.symbol ?? TOKENS[k]?.symbol ?? k;
+                    return (
                     <SelectItem
                       key={k}
                       value={k}
@@ -1243,10 +1385,11 @@ export function BridgePanel() {
                     >
                       <span className="flex items-center gap-2">
                         <TokenIcon tokenKey={k} className="h-4 w-4" />
-                        {TOKENS[k].symbol}
+                        {symbol}
                       </span>
                     </SelectItem>
-                  ))}
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
@@ -1570,6 +1713,7 @@ export function BridgePanel() {
           {isDeposit && isConnected && (
             <DappSelector
               sourceChainId={sourceChainId}
+              tokenAddress={tokenAddress}
               dappId={dappId}
               onDappChange={setDappId}
             />

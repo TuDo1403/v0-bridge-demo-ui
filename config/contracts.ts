@@ -96,8 +96,14 @@ export interface DappMeta {
 
 export const KNOWN_DAPPS: DappMeta[] = [
   { dappId: 0, label: "Direct Bridge", description: "Standard bridge transfer" },
-  { dappId: 1, label: "RiseX Composer", description: "Bridge + auto-deposit to RiseX collateral" },
+  { dappId: 1, label: "RISEx Perps Deposit", description: "Bridge + auto-deposit to RISEx perps collateral" },
+  { dappId: 2, label: "rlpUSDC Round Trip", description: "Bridge USDC, mint rlpUSDC, bridge back" },
 ];
+
+/** dappId 2 triggers a round-trip: deposit → compose on remote → mint vault shares → bridge back */
+export function isRoundTripDapp(dappId: number): boolean {
+  return dappId === 2;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */

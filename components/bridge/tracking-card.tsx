@@ -8,7 +8,8 @@ import { mapBackendStatus, isComposeFailed, isVaultRescueEligible, isComposeResc
 import { CHAINS, chainIdToEid, getLzScanBase, BLOCK_TIME_SECONDS } from "@/config/chains";
 import { useNetworkStore } from "@/lib/network-store";
 import { useBlockConfirmations } from "@/hooks/use-block-confirmations";
-import { TOKENS, getTokenAddress, KNOWN_DAPPS } from "@/config/contracts";
+import { TOKENS, getTokenAddress, KNOWN_DAPPS, isRoundTripDapp as isRoundTripFallback } from "@/config/contracts";
+import { useBridgeConfig, isDappRoundTrip } from "@/lib/bridge-config";
 import type { BridgeSession } from "@/lib/types";
 import { TxBadge } from "./tx-badge";
 import { RecoveryPanel } from "./recovery-panel";
@@ -45,7 +46,12 @@ type TrackingPhase =
   | "verifying"     // compose executing / verifying
   | "complete"      // everything done
   | "recovered"     // tokens rescued from vault (not bridged)
-  | "failed";       // LZ or compose error
+  | "failed"        // LZ or compose error
+  // Round-trip phases (dappId 2)
+  | "return_pending"   // compose succeeded, waiting for return bridge job
+  | "return_bridging"  // return bridge TX submitted
+  | "return_inflight"  // return LZ message in flight
+  | "return_complete"; // return bridge delivered on home
 
 /** Whether this session uses compose (dappId > 0, deposit-only) */
 function hasCompose(session: BridgeSession): boolean {
@@ -62,6 +68,10 @@ function derivePhase(session: BridgeSession): TrackingPhase {
 
   if (session.status === "recovered") return "recovered";
   if (session.status === "completed") return "complete";
+  if (session.status === "roundtrip_pending") return "return_pending";
+  if (session.status === "roundtrip_bridging") return "return_bridging";
+  if (session.status === "roundtrip_inflight") return "return_inflight";
+  if (session.status === "roundtrip_completed") return "return_complete";
   if (session.status === "error" || session.status === "failed") return "failed";
   // Session was reset to idle but still has an error (e.g. after a failed retry)
   if (session.error) return "failed";
@@ -110,6 +120,17 @@ const PHASE_STEPS_DIRECT: TrackingPhase[] = [
   "complete",
 ];
 
+const PHASE_STEPS_ROUNDTRIP: TrackingPhase[] = [
+  "waiting",
+  "indexing",
+  "inflight",
+  "verifying",
+  "return_pending",
+  "return_bridging",
+  "return_inflight",
+  "return_complete",
+];
+
 const PHASE_LABELS: Record<TrackingPhase, string> = {
   waiting: "Waiting for Indexing",
   indexing: "Confirming on Source",
@@ -119,6 +140,10 @@ const PHASE_LABELS: Record<TrackingPhase, string> = {
   complete: "Complete",
   recovered: "Recovered",
   failed: "Failed",
+  return_pending: "Minting Shares",
+  return_bridging: "Return Bridge",
+  return_inflight: "Returning",
+  return_complete: "Complete",
 };
 
 function phaseLabel(phase: TrackingPhase): string {
@@ -135,6 +160,10 @@ function phaseColor(phase: TrackingPhase): string {
     case "complete": return "text-success";
     case "recovered": return "text-chart-4";
     case "failed": return "text-destructive-foreground";
+    case "return_pending": return "text-chart-4";
+    case "return_bridging": return "text-primary";
+    case "return_inflight": return "text-primary";
+    case "return_complete": return "text-success";
   }
 }
 
@@ -148,6 +177,10 @@ function phaseIcon(phase: TrackingPhase) {
     case "complete": return <CheckCircle2 className="h-4 w-4" />;
     case "recovered": return <ArrowDownToLine className="h-4 w-4" />;
     case "failed": return <XCircle className="h-4 w-4" />;
+    case "return_pending": return <Clock className="h-4 w-4 animate-pulse" />;
+    case "return_bridging": return <Radio className="h-4 w-4 animate-pulse" />;
+    case "return_inflight": return <Zap className="h-4 w-4 animate-pulse" />;
+    case "return_complete": return <CheckCircle2 className="h-4 w-4" />;
   }
 }
 
@@ -297,8 +330,14 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
   const sourceChain = CHAINS[session.sourceChainId];
   const destChain = CHAINS[session.destChainId];
   const token = TOKENS[session.tokenKey];
-  const isTerminal = phase === "complete" || phase === "failed" || phase === "recovered";
-  const phaseSteps = hasCompose(session) ? PHASE_STEPS_COMPOSE : PHASE_STEPS_DIRECT;
+  const { config } = useBridgeConfig();
+  const isTerminal = phase === "complete" || phase === "return_complete" || phase === "failed" || phase === "recovered";
+  const isRoundTrip = isDappRoundTrip(config, session.dappId ?? 0) || isRoundTripFallback(session.dappId ?? 0);
+  const phaseSteps = isRoundTrip
+    ? PHASE_STEPS_ROUNDTRIP
+    : hasCompose(session)
+      ? PHASE_STEPS_COMPOSE
+      : PHASE_STEPS_DIRECT;
 
   // Pulse effect for active tracking
   const borderClass = cn(
@@ -394,6 +433,18 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             label="Bridge Tx"
             hash={(session.selfBridgeTxHash || session.backendProcessTxHash)!}
             explorerUrl={sourceChain?.explorerTxUrl((session.selfBridgeTxHash || session.backendProcessTxHash)!)}
+            className="!py-0.5 !text-[10px]"
+          />
+        </div>
+      )}
+
+      {/* Return leg tx hash for roundtrip */}
+      {isRoundTrip && session.returnLeg?.bridgeTxHash && (
+        <div className="px-4 pb-2 flex flex-wrap items-center gap-2">
+          <TxBadge
+            label="Return Tx"
+            hash={session.returnLeg.bridgeTxHash}
+            explorerUrl={destChain?.explorerTxUrl(session.returnLeg.bridgeTxHash)}
             className="!py-0.5 !text-[10px]"
           />
         </div>
@@ -502,6 +553,50 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                     : undefined
                 }
               />
+            </div>
+          )}
+
+          {/* Return bridge info — roundtrip sessions */}
+          {isRoundTrip && session.returnLeg && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+                Return Bridge ({destChain?.shortLabel} → {sourceChain?.shortLabel})
+              </span>
+              <TxBadge
+                label="Return Bridge Tx"
+                hash={session.returnLeg.bridgeTxHash}
+                explorerUrl={
+                  session.returnLeg.bridgeTxHash
+                    ? destChain?.explorerTxUrl(session.returnLeg.bridgeTxHash)
+                    : undefined
+                }
+              />
+              {session.returnLeg.lzTracking?.guid && (
+                <TxBadge
+                  label="Return LZ Msg"
+                  hash={session.returnLeg.lzTracking.guid}
+                  explorerUrl={
+                    session.returnLeg.bridgeTxHash
+                      ? `${LZ_SCAN_BASE}/tx/${session.returnLeg.bridgeTxHash}`
+                      : undefined
+                  }
+                />
+              )}
+              {session.returnLeg.lzTracking?.dstTxHash && (
+                <TxBadge
+                  label="Return Dest Tx"
+                  hash={session.returnLeg.lzTracking.dstTxHash}
+                  explorerUrl={sourceChain?.explorerTxUrl(session.returnLeg.lzTracking.dstTxHash)}
+                />
+              )}
+              {session.returnLeg.lzTracking?.lzStatus && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">Status</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted/50 text-foreground">
+                    {session.returnLeg.lzTracking.rawStatus ?? session.returnLeg.lzTracking.lzStatus}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 

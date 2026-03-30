@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import {
   Select,
   SelectContent,
@@ -8,20 +9,51 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useDappList, type ValidatedDapp } from "@/hooks/use-dapp-list";
+import { useBridgeConfig } from "@/lib/bridge-config";
+import { chainIdToEid } from "@/config/chains";
 import { Loader2 } from "lucide-react";
 
 interface DappSelectorProps {
   sourceChainId: number;
+  tokenAddress?: string;
   dappId: number;
   onDappChange: (dappId: number) => void;
 }
 
 export function DappSelector({
   sourceChainId,
+  tokenAddress,
   dappId,
   onDappChange,
 }: DappSelectorProps) {
   const { dapps, isLoading } = useDappList(sourceChainId);
+  const { config } = useBridgeConfig();
+  const srcEid = chainIdToEid(sourceChainId);
+  const eidStr = String(srcEid);
+
+  // Filter dapps by token support from dynamic config
+  const filteredDapps = dapps.map((d) => {
+    if (!config || !tokenAddress) return d;
+
+    const addr = tokenAddress.toLowerCase();
+    const supported = config.dapps.find((cd) => cd.dappId === d.dappId)
+      ?.supportedTokens[eidStr];
+
+    // If config has supportedTokens data, use it to determine availability
+    if (supported !== undefined) {
+      return { ...d, available: supported.includes(addr) };
+    }
+    return d;
+  });
+
+  const availableDapps = filteredDapps.filter((d) => d.available);
+
+  // Auto-reset to dappId 0 if current dapp doesn't support the selected token
+  useEffect(() => {
+    if (dappId !== 0 && availableDapps.length > 0 && !availableDapps.some((d) => d.dappId === dappId)) {
+      onDappChange(0);
+    }
+  }, [dappId, availableDapps, onDappChange]);
 
   if (isLoading) {
     return (
@@ -33,7 +65,6 @@ export function DappSelector({
   }
 
   // If only one dapp available, don't show selector
-  const availableDapps = dapps.filter((d) => d.available);
   if (availableDapps.length <= 1) return null;
 
   return (
@@ -49,7 +80,7 @@ export function DappSelector({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {dapps.map((d) => (
+          {filteredDapps.map((d) => (
             <SelectItem
               key={d.dappId}
               value={String(d.dappId)}

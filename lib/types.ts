@@ -18,7 +18,12 @@ export type BridgeStatus =
   | "completed"
   | "recovered"
   | "failed"
-  | "error";
+  | "error"
+  // Round-trip statuses (dappId 2: deposit → compose → mint rlpUSDC → bridge back)
+  | "roundtrip_pending"      // leg 1 compose succeeded, waiting for return job
+  | "roundtrip_bridging"     // return withdrawal job found, TX submitted
+  | "roundtrip_inflight"     // return LZ message in flight
+  | "roundtrip_completed";   // return bridge delivered on home
 
 export const STATUS_LABELS: Record<BridgeStatus, string> = {
   idle: "Ready",
@@ -37,6 +42,10 @@ export const STATUS_LABELS: Record<BridgeStatus, string> = {
   recovered: "Recovered",
   failed: "Failed",
   error: "Error",
+  roundtrip_pending: "Return Bridge Pending",
+  roundtrip_bridging: "Return Bridge Submitted",
+  roundtrip_inflight: "Return In Flight",
+  roundtrip_completed: "Round Trip Complete",
 };
 
 export const STATUS_ORDER: BridgeStatus[] = [
@@ -209,6 +218,16 @@ export interface BridgeSession {
   error?: string;
   /** LayerZero tracking data merged from LZ Scan API */
   lzTracking?: LzTrackingSnapshot;
+
+  /** Round-trip return leg (dappId 2): tracks the withdrawal bridge back to home */
+  returnLeg?: {
+    /** Backend job ID for the return withdrawal */
+    jobId?: string;
+    /** Operator bridge TX hash on the remote chain */
+    bridgeTxHash?: string;
+    /** LZ tracking for the return message */
+    lzTracking?: LzTrackingSnapshot;
+  };
 }
 
 /* ------------------------------------------------------------------ */

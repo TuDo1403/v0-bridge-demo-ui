@@ -150,7 +150,7 @@ export async function getDepositAddress(params: {
 }
 
 export function isTerminalStatus(status: string): boolean {
-  return status === "completed" || status === "error" || status === "failed";
+  return status === "completed" || status === "error" || status === "failed" || status === "roundtrip_completed";
 }
 
 /* ------------------------------------------------------------------ */
