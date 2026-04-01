@@ -44,7 +44,7 @@ app.prepare().then(() => {
 
     const match = WS_PATH_RE.exec(pathname);
     if (!match) {
-      socket.destroy();
+      // Let Next.js handle non-matching upgrades (e.g., HMR webpack-hmr).
       return;
     }
 

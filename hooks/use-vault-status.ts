@@ -20,9 +20,6 @@ interface UseVaultStatusOptions {
  * useVaultStatus subscribes to vault status updates via WebSocket (proxied
  * through the Next.js server), with automatic fallback to 2s HTTP polling
  * if WS fails to connect.
- *
- * Designed for the QR code / external wallet flow where the frontend
- * doesn't have the user's TX hash.
  */
 export function useVaultStatus({
   eid,
@@ -39,11 +36,17 @@ export function useVaultStatus({
   const wsRef = useRef<WebSocket | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastStatusRef = useRef<string>("");
+  const mountedRef = useRef(true);
+  const pollingStartedRef = useRef(false);
   const onJobDetectedRef = useRef(onJobDetected);
   onJobDetectedRef.current = onJobDetected;
 
   const cleanup = useCallback(() => {
+    mountedRef.current = false;
+    pollingStartedRef.current = false;
     if (wsRef.current) {
+      wsRef.current.onclose = null; // prevent onclose from restarting polling
+      wsRef.current.onerror = null;
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -55,6 +58,7 @@ export function useVaultStatus({
   }, []);
 
   const handleStatus = useCallback((resp: VaultStatusResponse) => {
+    if (!mountedRef.current) return;
     setStatus(resp);
     setError(null);
 
@@ -70,21 +74,52 @@ export function useVaultStatus({
       return;
     }
 
+    mountedRef.current = true;
+    pollingStartedRef.current = false;
+
+    function startPolling() {
+      if (pollingStartedRef.current || !mountedRef.current) return;
+      pollingStartedRef.current = true;
+      wsRef.current = null;
+
+      const poll = async () => {
+        if (!mountedRef.current) return;
+        try {
+          const resp = await pollVaultStatus(eid, vaultAddress, token, network);
+          if (!mountedRef.current) return;
+          handleStatus(resp);
+          if (resp.status === "completed" || resp.status === "failed") {
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+          }
+        } catch (err) {
+          if (!mountedRef.current) return;
+          setError(err instanceof Error ? err.message : "Poll failed");
+        }
+      };
+
+      poll();
+      pollRef.current = setInterval(poll, 2000);
+    }
+
     // Try WebSocket first.
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${proto}//${window.location.host}/api/bridge/ws/vault/${eid}/${vaultAddress}?token=${token}&net=${network}`;
 
     let ws: WebSocket;
     let fallbackTimer: ReturnType<typeof setTimeout>;
+    let wsErrored = false;
 
     try {
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      // If WS doesn't open within 3s, fall back to polling.
       fallbackTimer = setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
-          console.warn("[vault-status] WS connect timeout, falling back to polling");
+        if (ws.readyState !== WebSocket.OPEN && !wsErrored) {
+          wsErrored = true;
+          ws.onclose = null;
           ws.close();
           startPolling();
         }
@@ -92,16 +127,16 @@ export function useVaultStatus({
 
       ws.onopen = () => {
         clearTimeout(fallbackTimer);
+        if (!mountedRef.current) { ws.close(); return; }
         setConnected(true);
         setError(null);
       };
 
       ws.onmessage = (event) => {
+        if (!mountedRef.current) return;
         try {
           const resp: VaultStatusResponse = JSON.parse(event.data);
           handleStatus(resp);
-
-          // Server sends {status: "timeout"} when it closes.
           if (resp.status === "timeout" || resp.status === "completed" || resp.status === "failed") {
             cleanup();
           }
@@ -111,45 +146,23 @@ export function useVaultStatus({
       };
 
       ws.onclose = () => {
+        if (!mountedRef.current) return;
         setConnected(false);
-        // If closed unexpectedly while still enabled, fall back to polling.
-        if (enabled && lastStatusRef.current !== "completed" && lastStatusRef.current !== "failed") {
+        if (!wsErrored && lastStatusRef.current !== "completed" && lastStatusRef.current !== "failed") {
           startPolling();
         }
       };
 
       ws.onerror = () => {
+        if (wsErrored) return;
+        wsErrored = true;
         clearTimeout(fallbackTimer);
-        console.warn("[vault-status] WS error, falling back to polling");
+        ws.onclose = null; // prevent double startPolling
         ws.close();
-        startPolling();
+        if (mountedRef.current) startPolling();
       };
     } catch {
-      // WebSocket constructor failed (e.g., CSP block).
       startPolling();
-    }
-
-    function startPolling() {
-      if (pollRef.current) return; // already polling
-      wsRef.current = null;
-
-      const poll = async () => {
-        try {
-          const resp = await pollVaultStatus(eid, vaultAddress, token, network);
-          handleStatus(resp);
-          if (resp.status === "completed" || resp.status === "failed") {
-            if (pollRef.current) {
-              clearInterval(pollRef.current);
-              pollRef.current = null;
-            }
-          }
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Poll failed");
-        }
-      };
-
-      poll(); // immediate first poll
-      pollRef.current = setInterval(poll, 2000);
     }
 
     return () => {
