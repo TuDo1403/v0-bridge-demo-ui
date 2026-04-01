@@ -73,11 +73,15 @@ export function useDepositAddress({
     } finally {
       setIsLoading(false);
     }
-  }, [srcEid, dstEid, address, recipient, effectiveDappId, network]);
+  }, [srcEid, dstEid, address, recipient, effectiveDappId, direction, network]);
 
   useEffect(() => {
+    // Reset so the sync effect in the parent always sees a transition
+    // (undefined → new address) and fires, even if the new address
+    // happens to equal the previous one from a different route.
+    setDepositAddress(undefined);
+
     if (!address || !recipient) {
-      setDepositAddress(undefined);
       return;
     }
 
@@ -110,7 +114,7 @@ export function useDepositAddress({
     return () => {
       cancelled = true;
     };
-  }, [srcEid, dstEid, address, recipient, effectiveDappId, network]);
+  }, [srcEid, dstEid, address, recipient, effectiveDappId, direction, network]);
 
   return {
     depositAddress,

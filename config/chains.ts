@@ -1,5 +1,5 @@
 import { type Chain } from "viem";
-import { mainnet, baseSepolia } from "viem/chains";
+import { mainnet, base, arbitrum, baseSepolia } from "viem/chains";
 import type { NetworkId } from "@/lib/network-store";
 
 /* ------------------------------------------------------------------ */
@@ -69,6 +69,36 @@ export const ethereumMainnetChain: Chain = {
   ...mainnet,
   rpcUrls: {
     default: { http: [ETHEREUM_MAINNET_RPC_URLS[0]] },
+  },
+};
+
+export const BASE_MAINNET_RPC_URLS = [
+  process.env.NEXT_PUBLIC_BASE_RPC_URL ?? "https://mainnet.base.org",
+  "https://base-rpc.publicnode.com",
+  "https://base.drpc.org",
+];
+
+export const baseMainnetChain: Chain = {
+  ...base,
+  rpcUrls: {
+    ...base.rpcUrls,
+    default: { http: BASE_MAINNET_RPC_URLS },
+    public: { http: BASE_MAINNET_RPC_URLS },
+  },
+};
+
+export const ARBITRUM_MAINNET_RPC_URLS = [
+  process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL ?? "https://arb1.arbitrum.io/rpc",
+  "https://arbitrum-one-rpc.publicnode.com",
+  "https://arbitrum.drpc.org",
+];
+
+export const arbitrumMainnetChain: Chain = {
+  ...arbitrum,
+  rpcUrls: {
+    ...arbitrum.rpcUrls,
+    default: { http: ARBITRUM_MAINNET_RPC_URLS },
+    public: { http: ARBITRUM_MAINNET_RPC_URLS },
   },
 };
 
@@ -142,6 +172,24 @@ export const CHAINS: Record<number, ChainMeta> = {
     explorerTxUrl: (h) => `https://etherscan.io/tx/${h}`,
     network: "mainnet",
   },
+  [baseMainnetChain.id]: {
+    chain: baseMainnetChain,
+    lzEid: 30184,
+    label: "Base",
+    shortLabel: "BASE",
+    iconKey: "base",
+    explorerTxUrl: (h) => `https://basescan.org/tx/${h}`,
+    network: "mainnet",
+  },
+  [arbitrumMainnetChain.id]: {
+    chain: arbitrumMainnetChain,
+    lzEid: 30110,
+    label: "Arbitrum",
+    shortLabel: "ARB",
+    iconKey: "arbitrum",
+    explorerTxUrl: (h) => `https://arbiscan.io/tx/${h}`,
+    network: "mainnet",
+  },
   [riseMainnetChain.id]: {
     chain: riseMainnetChain,
     lzEid: 30401,
@@ -194,9 +242,29 @@ export const BRIDGE_ROUTES_BY_NETWORK: Record<NetworkId, BridgeRoute[]> = {
       label: "Ethereum -> RISE",
     },
     {
+      sourceChainId: baseMainnetChain.id,
+      destChainId: riseMainnetChain.id,
+      label: "Base -> RISE",
+    },
+    {
+      sourceChainId: arbitrumMainnetChain.id,
+      destChainId: riseMainnetChain.id,
+      label: "Arbitrum -> RISE",
+    },
+    {
       sourceChainId: riseMainnetChain.id,
       destChainId: ethereumMainnetChain.id,
       label: "RISE -> Ethereum",
+    },
+    {
+      sourceChainId: riseMainnetChain.id,
+      destChainId: baseMainnetChain.id,
+      label: "RISE -> Base",
+    },
+    {
+      sourceChainId: riseMainnetChain.id,
+      destChainId: arbitrumMainnetChain.id,
+      label: "RISE -> Arbitrum",
     },
   ],
 };
@@ -271,7 +339,9 @@ export const EXTERNAL_LINKS = getExternalLinks("testnet");
 export const REQUIRED_CONFIRMATIONS: Record<number, number> = {
   // Mainnet
   [ethereumMainnetChain.id]: 15,   // ETH → RISE: 15 ETH blocks
-  [riseMainnetChain.id]: 900,      // RISE → ETH: 900 RISE blocks
+  [baseMainnetChain.id]: 10,       // Base → RISE: 10 Base blocks
+  [arbitrumMainnetChain.id]: 20,   // Arb → RISE: 20 Arb blocks
+  [riseMainnetChain.id]: 20,       // RISE → destination: 20 RISE blocks
   // Testnet
   [sepoliaChain.id]: 15,           // Sepolia → RISE Testnet
   [baseSepoliaChain.id]: 1,        // Base Sepolia → RISE Testnet
@@ -281,6 +351,8 @@ export const REQUIRED_CONFIRMATIONS: Record<number, number> = {
 /** Average block time in seconds, used to estimate ETA */
 export const BLOCK_TIME_SECONDS: Record<number, number> = {
   [ethereumMainnetChain.id]: 12,
+  [baseMainnetChain.id]: 2,
+  [arbitrumMainnetChain.id]: 0.26,
   [riseMainnetChain.id]: 1,
   [sepoliaChain.id]: 12,
   [baseSepoliaChain.id]: 2,

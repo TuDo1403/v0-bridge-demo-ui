@@ -123,7 +123,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   sessionSelectedAt: 0,
   recentSessions: [],
 
-  setSourceChainId: (id) => set({ sourceChainId: id }),
+  setSourceChainId: (id) => set({ sourceChainId: id, direction: getBridgeDirection(id) }),
   setDestChainId: (id) => set({ destChainId: id }),
   setTokenKey: (key) => set({ tokenKey: key }),
   setAmount: (amount) => set({ amount }),

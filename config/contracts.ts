@@ -42,6 +42,8 @@ export const TOKENS: Record<string, TokenMeta> = {
       11155931: "0x6bf6e258b3c5650b448cb1112835048ba5619dc1",
       // Mainnet
       1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      42161: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
       4153: "0xe436820ba0C69702c1d3E601d421c0eF38262739",
     },
   },
@@ -81,6 +83,14 @@ export const CONTRACTS: Record<number, ChainContracts> = {
   1: {
     globalDeposit: "0xE5E6268977575ccFcB50055c17a4563b8b0Ce24E",
     lockReleaseOFT: "0x8b648f051AE72E040166FA5f171838111d982d86",
+  },
+  // Mainnet — Base
+  8453: {
+    globalDeposit: "0xE5E6268977575ccFcB50055c17a4563b8b0Ce24E",
+  },
+  // Mainnet — Arbitrum
+  42161: {
+    globalDeposit: "0xE5E6268977575ccFcB50055c17a4563b8b0Ce24E",
   },
   // Mainnet — RISE
   4153: {

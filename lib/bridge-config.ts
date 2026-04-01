@@ -169,7 +169,12 @@ export interface TokenOption {
   id: string;
 }
 
-/** Get token options available for a route, keyed by source-chain symbol for UI compatibility */
+/** Normalize bridged token symbols (e.g. "USDC.e" → "USDC") for stable keying */
+function normalizeTokenKey(symbol: string): string {
+  return symbol.replace(/\.e$/i, "");
+}
+
+/** Get token options available for a route, keyed by normalized symbol for UI compatibility */
 export function getTokenOptions(
   config: BridgeConfig | undefined,
   srcEid: number,
@@ -190,8 +195,8 @@ export function getTokenOptions(
     if (!route.tokens.includes(token.id)) continue;
 
     options.push({
-      key: srcChain.symbol, // use symbol as key for backward compat with tokenKey
-      symbol: srcChain.symbol,
+      key: normalizeTokenKey(srcChain.symbol), // stable key: "USDC.e" → "USDC"
+      symbol: srcChain.symbol, // display symbol preserves ".e" suffix
       name: srcChain.name,
       address: srcChain.address,
       decimals: token.decimals,
@@ -210,10 +215,11 @@ export function resolveTokenAddress(
 ): string | undefined {
   if (!config) return undefined;
   const eidStr = String(eid);
-  // Find by symbol match on the given chain
+  const normalized = normalizeTokenKey(tokenKey);
+  // Find by normalized symbol match on the given chain (handles USDC.e ↔ USDC)
   for (const token of config.tokens) {
     const chain = token.chains[eidStr];
-    if (chain && chain.symbol === tokenKey) {
+    if (chain && normalizeTokenKey(chain.symbol) === normalized) {
       return chain.address;
     }
   }
@@ -228,9 +234,10 @@ export function resolveTokenMeta(
 ): { symbol: string; name: string; decimals: number; address: string } | undefined {
   if (!config) return undefined;
   const eidStr = String(eid);
+  const normalized = normalizeTokenKey(tokenKey);
   for (const token of config.tokens) {
     const chain = token.chains[eidStr];
-    if (chain && chain.symbol === tokenKey) {
+    if (chain && normalizeTokenKey(chain.symbol) === normalized) {
       return { symbol: chain.symbol, name: chain.name, decimals: token.decimals, address: chain.address };
     }
   }
