@@ -153,6 +153,32 @@ export function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "error" || status === "failed" || status === "roundtrip_completed";
 }
 
+/** Response from the vault status endpoint. */
+export interface VaultStatusResponse {
+  status: string;       // waiting | pending | claimed | submitted | completed | failed
+  jobId?: string;
+  txHash?: string;      // vault fund tx hash
+  bridgeTxHash?: string;
+}
+
+/** Poll vault status by vault address and token. */
+export async function pollVaultStatus(
+  eid: number,
+  vaultAddress: string,
+  token: string,
+  network: "mainnet" | "testnet" = "mainnet"
+): Promise<VaultStatusResponse> {
+  const params = new URLSearchParams({
+    eid: String(eid),
+    vaultAddress,
+    token,
+    net: network,
+  });
+  const res = await fetch(`${API_BASE}/vault-status?${params.toString()}`);
+  if (!res.ok) await throwApiError(res, "Vault status poll failed");
+  return res.json();
+}
+
 /* ------------------------------------------------------------------ */
 /*  LZ Scan polling for self-bridge sessions                          */
 /* ------------------------------------------------------------------ */

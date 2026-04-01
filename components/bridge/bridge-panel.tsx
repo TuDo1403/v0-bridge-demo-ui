@@ -18,6 +18,7 @@ import { useBridgeStore } from "@/lib/bridge-store";
 import { riseGlobalDepositAbi, riseGlobalWithdrawAbi, erc20Abi, oftConversionRateAbi } from "@/lib/abi";
 import { CHAINS, BRIDGE_ROUTES_BY_NETWORK, chainIdToEid } from "@/config/chains";
 import { useDepositAddress } from "@/hooks/use-deposit-address";
+import { useVaultStatus } from "@/hooks/use-vault-status";
 import { useLzQuote } from "@/hooks/use-lz-quote";
 import { usePermit2 } from "@/hooks/use-permit2";
 import { useEIP2612 } from "@/hooks/use-eip2612";
@@ -744,6 +745,28 @@ export function BridgePanel() {
     },
     [updateSession]
   );
+
+  // --- Vault status subscription (WS with poll fallback) ---
+  // Active during the "transfer" step when the user hasn't sent via the connected wallet.
+  // Auto-detects when the backend picks up a transfer to the vault (QR code / external wallet flow).
+  const vaultStatusEnabled = step === "transfer" && !!depositAddress && !!tokenAddress && !transferHash;
+  useVaultStatus({
+    eid: srcEid,
+    vaultAddress: depositAddress ?? "",
+    token: tokenAddress ?? "",
+    network,
+    enabled: vaultStatusEnabled,
+    onJobDetected: useCallback((resp: import("@/lib/bridge-service").VaultStatusResponse) => {
+      if (!activeSession || !resp.jobId) return;
+      updateSession(activeSession.id, {
+        status: mapBackendStatus(resp.status),
+        jobId: resp.jobId,
+        userTransferTxHash: resp.txHash,
+      });
+      startPolling(resp.jobId, activeSession.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeSession?.id, startPolling, updateSession]),
+  });
 
   /** Poll LZ Scan directly for self-bridge sessions (no backend involvement) */
   const startLzPolling = useCallback(
