@@ -576,8 +576,8 @@ export function BridgePanel() {
     query: { enabled: !isDeposit && !!globalWithdrawAddr && !!destLzEid, refetchInterval: 30_000, retry: 3, retryDelay: 2000 },
   });
 
-  // --- Check deposit address balance ---
-  const { data: depositBalance, refetch: refetchBalance } = useReadContract({
+  // --- Check deposit address balance (kept for on-chain polling visibility) ---
+  useReadContract({
     address: tokenAddress,
     abi: erc20Abi,
     functionName: "balanceOf",
@@ -652,55 +652,13 @@ export function BridgePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transferHash]);
 
-  // When tx mined, verify deposit and call backend
+  // When tx mined, update session status. Job detection is handled by useVaultStatus.
   useEffect(() => {
     if (isTxMinedRaw && activeSession) {
       updateSession(activeSession.id, { status: "transfer_mined" });
-      handlePostMine();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTxMinedRaw]);
-
-  const handlePostMine = useCallback(async () => {
-    if (!activeSession) return;
-
-    // Verify deposit balance on source chain
-    const balResult = await refetchBalance();
-    const bal = balResult.data;
-    if (bal && bal > 0n) {
-      updateSession(activeSession.id, { status: "deposit_verified" });
-    }
-
-    // Vault is always known (saved by getDepositAddress), so the block poller will
-    // auto-create a job and the operator will bridge it — regardless of bridgeMode.
-    // Always go through submitVaultFunded: it returns the existing job if the block
-    // poller already created one, or creates a new one otherwise.
-    const sessionDappId = activeSession.dappId ?? 0;
-
-    try {
-      const res = await submitVaultFunded({
-        srcEid: chainIdToEid(activeSession.sourceChainId),
-        dstEid: chainIdToEid(activeSession.destChainId),
-        userTransferTxHash: activeSession.userTransferTxHash!,
-        token: (resolveTokenAddress(bridgeConfig, activeSession.tokenKey, chainIdToEid(activeSession.sourceChainId)) ?? getTokenAddressFallback(activeSession.tokenKey, activeSession.sourceChainId))!,
-        receiver: activeSession.recipientAddress || activeSession.userAddress,
-        dappId: sessionDappId,
-      }, network);
-
-      updateSession(activeSession.id, {
-        status: mapBackendStatus(res.status),
-        jobId: res.jobId,
-      });
-
-      startPolling(res.jobId, activeSession.id);
-    } catch (err) {
-      const errMsg =
-        err instanceof Error ? err.message : "Backend processing failed";
-      updateSession(activeSession.id, { status: "error", error: errMsg });
-      setError(errMsg);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession, isDeposit, authorativeComposeMsg, network]);
 
   const startPolling = useCallback(
     (jobId: string, sessionId: string) => {
@@ -749,7 +707,7 @@ export function BridgePanel() {
   // --- Vault status subscription (WS with poll fallback) ---
   // Active during the "transfer" step when the user hasn't sent via the connected wallet.
   // Auto-detects when the backend picks up a transfer to the vault (QR code / external wallet flow).
-  const vaultStatusEnabled = step === "transfer" && !!depositAddress && !!tokenAddress && !transferHash;
+  const vaultStatusEnabled = step === "transfer" && !!depositAddress && !!tokenAddress;
   useVaultStatus({
     eid: srcEid,
     vaultAddress: depositAddress ?? "",
@@ -1457,12 +1415,11 @@ export function BridgePanel() {
             variant="outline"
             onClick={() => {
               setError(null);
-              handlePostMine();
             }}
             className="h-10 font-mono text-sm gap-2 flex-1 border-destructive/30 hover:bg-destructive/10"
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            Retry Processing
+            Dismiss
           </Button>
         ) : null}
         <Button
@@ -2357,17 +2314,10 @@ export function BridgePanel() {
                   The operator will pick up your deposit and submit the bridge transaction.
                 </span>
               </div>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setError(null);
-                  handlePostMine();
-                }}
-                className="h-10 font-mono text-sm gap-2 border-primary/30 hover:bg-primary/10"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                Retry Backend Submission
-              </Button>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Waiting for backend to detect transfer...
+              </div>
               {/* Recovery option for stuck operator sessions */}
               {activeSession && (Date.now() - activeSession.createdAt > 120_000) && (
                 <RecoveryPanel session={activeSession} />
