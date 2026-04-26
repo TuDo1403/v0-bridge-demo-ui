@@ -75,6 +75,43 @@ export interface SyncProgressResponse {
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
+export interface JobFeedItem {
+  id: string;
+  status: string;
+  direction: string;
+  srcEid: number;
+  dstEid: number;
+  sender: string;
+  receiver: string;
+  token: string;
+  amount: string;
+  retryCount: number;
+  errorMessage: string | null;
+  bridgeTxHash: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // correlated bridge fields (null until confirmed)
+  lzStatus: string | null;
+  lzGuid: string | null;
+  lzDstTxHash: string | null;
+  fee: string | null;
+}
+
+export interface JobFeedResponse {
+  items: JobFeedItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface JobFeedFilter {
+  address?: string;
+  vaultAddress?: string;
+  status?: string;
+  direction?: string;
+  range?: TimeRange;
+}
+
 // ── Fetchers ─────────────────────────────────────────────────────────────────
 
 export async function fetchStatsSummary(
@@ -112,5 +149,22 @@ export async function fetchSyncProgress(
 ): Promise<SyncProgressResponse> {
   const res = await fetch(`${API_BASE}/sync?net=${network}`);
   if (!res.ok) throw new Error("Failed to fetch sync progress");
+  return res.json();
+}
+
+export async function fetchJobFeed(
+  filter: JobFeedFilter,
+  limit: number,
+  offset: number,
+  network: "mainnet" | "testnet" = "mainnet",
+): Promise<JobFeedResponse> {
+  const params = new URLSearchParams({ net: network, limit: String(limit), offset: String(offset) });
+  if (filter.address) params.set("address", filter.address);
+  if (filter.vaultAddress) params.set("vaultAddress", filter.vaultAddress);
+  if (filter.status) params.set("status", filter.status);
+  if (filter.direction) params.set("direction", filter.direction);
+  if (filter.range) params.set("range", filter.range);
+  const res = await fetch(`${API_BASE}/jobs/feed?${params}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to fetch job feed");
   return res.json();
 }
