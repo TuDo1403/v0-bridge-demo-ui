@@ -4,11 +4,11 @@ import { useState } from "react";
 import { useAccount } from "wagmi";
 import { type Address, isAddress } from "viem";
 import { PageShell } from "@/components/bridge/page-shell";
-import { VaultDisplay } from "./vault-recover";
+import { VaultDisplay, type VaultLookupContext } from "./vault-recover";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useDepositAddress } from "@/hooks/use-deposit-address";
-import { CHAINS, getSupportedChainIds } from "@/config/chains";
+import { CHAINS, chainIdToEid, getSupportedChainIds } from "@/config/chains";
 import { KNOWN_DAPPS, getBridgeDirection } from "@/config/contracts";
 import { useNetworkStore } from "@/lib/network-store";
 import {
@@ -183,7 +183,21 @@ export function RecoverLookup() {
             )}
 
             {vaultAddress && (
-              <VaultDisplay vaultAddress={vaultAddress} chainId={sourceChainId} />
+              <VaultDisplay
+                vaultAddress={vaultAddress}
+                chainId={sourceChainId}
+                lookup={
+                  isAddress(resolvedSrc) && isAddress(resolvedDst)
+                    ? ({
+                        direction,
+                        srcAddress: resolvedSrc as Address,
+                        dstAddress: resolvedDst as Address,
+                        dappId: direction === "deposit" ? dappId : undefined,
+                        dstEid: direction === "withdraw" ? chainIdToEid(destChainId) : undefined,
+                      } satisfies VaultLookupContext)
+                    : undefined
+                }
+              />
             )}
           </div>
         )}
