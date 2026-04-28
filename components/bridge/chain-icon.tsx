@@ -28,10 +28,23 @@ function EthereumIcon({ className }: { className?: string }) {
 function RiseIcon({ className }: { className?: string }) {
   return (
     <Image
-      src="/icons/rise.svg"
+      src="/icons/rise.png"
       alt=""
       width={24}
       height={24}
+      className={cn("rounded-full", className)}
+      aria-hidden="true"
+    />
+  );
+}
+
+function LayerZeroIcon({ className }: { className?: string }) {
+  return (
+    <Image
+      src="/icons/layerzero.svg"
+      alt=""
+      width={34}
+      height={34}
       className={cn("rounded-full", className)}
       aria-hidden="true"
     />
@@ -57,46 +70,14 @@ function BaseIcon({ className }: { className?: string }) {
 
 function ArbitrumIcon({ className }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 256 256"
-      fill="none"
-      className={className}
+    <Image
+      src="/icons/arbitrum.svg"
+      alt=""
+      width={24}
+      height={24}
+      className={cn("rounded-full", className)}
       aria-hidden="true"
-    >
-      <circle cx="128" cy="128" r="128" fill="#213147" />
-      <path
-        d="M151.818 141.037L170.299 174.455L189.557 163.27L163.769 120.765L151.818 141.037Z"
-        fill="#12AAFF"
-      />
-      <path
-        d="M189.557 163.27L170.299 174.455L199.352 225.312L214.51 216.568L189.557 163.27Z"
-        fill="white"
-      />
-      <path
-        d="M128.325 91.621L163.769 120.765L151.818 141.037L106.893 103.878L128.325 91.621Z"
-        fill="#12AAFF"
-      />
-      <path
-        d="M106.893 103.878L151.818 141.037L99.949 204.28L85.266 213.24L106.893 103.878Z"
-        fill="white"
-      />
-      <path
-        d="M85.266 213.24L99.949 204.28L56.693 216.568L71.851 225.312L85.266 213.24Z"
-        fill="#9DCCED"
-      />
-      <path
-        d="M56.693 216.568L41.535 207.824V69.824L56.693 61.08V216.568Z"
-        fill="#213147"
-      />
-      <path
-        d="M214.51 216.568L199.352 225.312V87.312L214.51 78.568V216.568Z"
-        fill="#213147"
-      />
-      <path
-        d="M199.352 87.312L128.325 46.312L56.693 61.08L41.535 69.824L128.325 30.824L214.51 78.568L199.352 87.312Z"
-        fill="#9DCCED"
-      />
-    </svg>
+    />
   );
 }
 
@@ -105,6 +86,7 @@ const CHAIN_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   base: BaseIcon,
   arbitrum: ArbitrumIcon,
   rise: RiseIcon,
+  layerzero: LayerZeroIcon,
 };
 
 export function ChainIcon({

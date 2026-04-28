@@ -1,20 +1,23 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import {
   ChevronDown,
   ChevronRight,
   ArrowRight,
-  ExternalLink,
   Copy,
   Check,
   Loader2,
   Search,
+  Link2,
 } from "lucide-react";
 import { PageShell } from "@/components/bridge/page-shell";
+import { ChainIcon } from "@/components/bridge/chain-icon";
 import {
   fetchJobFeed,
+  fetchJobById,
   type JobFeedItem,
   type JobFeedFilter,
   type TimeRange,
@@ -82,7 +85,6 @@ const FAILED_STAGE = {
   hint: "TX reverted or max retries exceeded. If within retry limit, job is re-queued back to Pending.",
 } as const;
 
-// For status badge lookup
 const LIFECYCLE_STAGES = [...HAPPY_PATH, FAILED_STAGE] as const;
 
 /* ------------------------------------------------------------------ */
@@ -91,22 +93,31 @@ const LIFECYCLE_STAGES = [...HAPPY_PATH, FAILED_STAGE] as const;
 
 export function FeedPage() {
   const network = useNetworkStore((s) => s.network);
-  const [filter, setFilter] = useState<JobFeedFilter>({ range: "24h" });
+  const searchParams = useSearchParams();
+  const initialJobId = searchParams.get("job") ?? undefined;
+
+  const [filter, setFilter] = useState<JobFeedFilter>({ range: "24h", jobId: initialJobId });
   const [page, setPage] = useState(0);
 
-  // Reset pagination when the network changes — the new network may have
-  // fewer rows, and a stale offset would request a page past the end and
-  // surface "No results found" even though earlier pages have data.
-  useEffect(() => {
-    setPage(0);
-  }, [network]);
+  // When a specific job ID is linked, fetch it directly (bypasses pagination)
+  const { data: linkedJob, isLoading: linkedLoading } = useSWR(
+    filter.jobId ? ["job-by-id", filter.jobId, network] : null,
+    () => fetchJobById(filter.jobId!, network),
+    { refreshInterval: 15_000 },
+  );
 
-  const swrKey = ["job-feed", filter, page, network];
-  const { data, error, isLoading } = useSWR(
+  // Reset pagination when the network changes to avoid stale out-of-range offsets
+  useEffect(() => { setPage(0); }, [network]);
+
+  const swrKey = filter.jobId ? null : ["job-feed", filter, page, network];
+  const { data, error: feedError, isLoading: feedLoading } = useSWR(
     swrKey,
     () => fetchJobFeed(filter, PAGE_SIZE, page * PAGE_SIZE, network),
     { refreshInterval: 15_000, keepPreviousData: true },
   );
+
+  const isLoading = filter.jobId ? linkedLoading : feedLoading;
+  const hasError = !filter.jobId && feedError && !data;
 
   const handleFilterChange = useCallback((next: Partial<JobFeedFilter>) => {
     setFilter((f) => ({ ...f, ...next }));
@@ -115,6 +126,11 @@ export function FeedPage() {
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
 
+  // Resolve what to display
+  const displayItems: JobFeedItem[] = filter.jobId
+    ? linkedJob ? [linkedJob] : []
+    : data?.items ?? [];
+
   return (
     <PageShell>
       <div className="space-y-4">
@@ -122,14 +138,24 @@ export function FeedPage() {
           <h1 className="text-sm font-mono font-medium text-foreground tracking-wide">
             Request Feed
           </h1>
-          {data && (
-            <span className="text-[10px] font-mono text-muted-foreground">
-              {data.total.toLocaleString()} results
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {filter.jobId && (
+              <button
+                onClick={() => handleFilterChange({ jobId: undefined })}
+                className="text-[10px] font-mono text-amber-500 hover:text-amber-400 border border-amber-500/30 rounded px-2 py-0.5 hover:bg-amber-500/10 transition-colors"
+              >
+                ✕ job filter
+              </button>
+            )}
+            {!filter.jobId && data && (
+              <span className="text-[10px] font-mono text-muted-foreground">
+                {data.total.toLocaleString()} results
+              </span>
+            )}
+          </div>
         </div>
 
-        <LifecycleDiagram />
+        <LifecyclePanel />
         <FilterBar filter={filter} onChange={handleFilterChange} />
 
         <div className="border border-border/50 bg-card rounded-lg overflow-hidden">
@@ -137,47 +163,50 @@ export function FeedPage() {
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          ) : error && !data ? (
-            <div
-              role="alert"
-              className="flex flex-col items-center justify-center py-16 gap-2 text-red-400"
-            >
+          ) : hasError ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-2 text-red-400">
               <span className="text-xs font-mono">Failed to load feed</span>
-              <span className="text-[10px] font-mono text-muted-foreground break-all px-6 text-center">
-                {extractErrorMessage(error)}
-              </span>
             </div>
-          ) : data && data.items.length === 0 ? (
+          ) : !displayItems.length ? (
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
               <Search className="h-5 w-5" />
-              <span className="text-xs font-mono">No results found</span>
+              <span className="text-xs font-mono">
+                {filter.jobId ? "Job not found" : "No results found"}
+              </span>
             </div>
-          ) : data ? (
+          ) : (
             <>
-              <table className="w-full text-xs font-mono">
-                <thead>
-                  <tr className="border-b border-border/30 text-[10px] text-muted-foreground uppercase tracking-wider">
-                    <th className="w-6 py-2 pl-3" />
-                    <th className="text-left py-2 pr-3 whitespace-nowrap">Time</th>
-                    <th className="text-left py-2 pr-3">Dir</th>
-                    <th className="text-left py-2 pr-3 whitespace-nowrap">Route</th>
-                    <th className="text-left py-2 pr-3">Sender</th>
-                    <th className="text-right py-2 pr-3">Amount</th>
-                    <th className="text-left py-2 pr-3">Status</th>
-                    <th className="text-left py-2 pr-3">LZ</th>
-                    <th className="text-left py-2 pr-3">Retries</th>
-                    <th className="text-left py-2">Error</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.items.map((item) => (
-                    <JobRow key={item.id} item={item} network={network} />
-                  ))}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-border/30 text-[10px] text-muted-foreground uppercase tracking-wider">
+                      <th className="w-6 py-2 pl-3" />
+                      <th className="text-left py-2 pr-3 whitespace-nowrap">Time</th>
+                      <th className="text-left py-2 pr-3">Dir</th>
+                      <th className="text-left py-2 pr-3 whitespace-nowrap">Route</th>
+                      <th className="text-left py-2 pr-3 hidden sm:table-cell">Sender</th>
+                      <th className="text-right py-2 pr-3 hidden sm:table-cell">Amount</th>
+                      <th className="text-left py-2 pr-3">Status</th>
+                      <th className="text-left py-2 pr-3 hidden md:table-cell">LZ</th>
+                      <th className="text-center py-2 pr-3 hidden md:table-cell">Retries</th>
+                      <th className="text-left py-2 hidden md:table-cell">Error</th>
+                      <th className="w-6 py-2 pr-3" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayItems.map((item) => (
+                      <JobRow
+                        key={item.id}
+                        item={item}
+                        network={network}
+                        highlightId={filter.jobId}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
-              {/* Pagination */}
-              {totalPages > 1 && (
+              {!filter.jobId && totalPages > 1 && (
                 <div className="flex items-center justify-between px-4 py-2 border-t border-border/30">
                   <span className="text-[10px] font-mono text-muted-foreground">
                     Page {page + 1} of {totalPages}
@@ -201,7 +230,7 @@ export function FeedPage() {
                 </div>
               )}
             </>
-          ) : null}
+          )}
         </div>
       </div>
     </PageShell>
@@ -209,19 +238,18 @@ export function FeedPage() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Lifecycle Diagram                                                  */
+/*  Lifecycle Panel (collapsible)                                      */
 /* ------------------------------------------------------------------ */
 
-// Stage and transition keys never collide, so a single record keeps the
-// lookup in `show` simple and makes new tips easy to add.
-const LIFECYCLE_TIPS: Record<string, string> = {
-  // Stages
+const STAGE_TIPS: Record<string, string> = {
   pending:   "Waiting to be picked up by an operator.",
   claimed:   "Locked by an operator — TX being built and signed.",
   submitted: "TX broadcast on-chain. Awaiting receipt and LZ delivery.",
   completed: "Bridge confirmed. Funds delivered to destination.",
   failed:    "Terminal failure — max retries exhausted or TX permanently rejected.",
-  // Transitions
+};
+
+const ARROW_TIPS: Record<string, string> = {
   "p→c":  "Operator claims the job (SELECT FOR UPDATE SKIP LOCKED).",
   "c→s":  "TX sent on-chain. bridge_tx_hash recorded.",
   "s→cp": "On-chain receipt confirmed. Bridge event observed.",
@@ -232,18 +260,56 @@ const LIFECYCLE_TIPS: Record<string, string> = {
   "f→p":  "RetryFailedJobs sweep — only if no bridge_tx_hash and retry_count < max.",
 };
 
+function LifecyclePanel() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="border border-border/50 bg-card rounded-lg">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
+          Lifecycle
+        </span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="border-t border-border/30 px-4 pb-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+            <div className="md:border-r md:border-border/20 md:pr-4">
+              <p className="text-[9px] font-mono uppercase text-muted-foreground/60 tracking-wider pt-3 pb-1">Request</p>
+              <LifecycleDiagram />
+            </div>
+            <div className="mt-3 border-t border-border/20 pt-3 md:mt-0 md:border-t-0 md:pt-0">
+              <p className="text-[9px] font-mono uppercase text-muted-foreground/60 tracking-wider pt-3 pb-1">LayerZero</p>
+              <LzLifecycleDiagram />
+            </div>
+          </div>
+          <p className="text-[9px] font-mono italic text-muted-foreground/40 mt-2 text-center">
+            *hover on stages and arrows to see explanation
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LifecycleDiagram() {
   const [tip, setTip] = useState<string | null>(null);
-  const show = (key: string) => setTip(LIFECYCLE_TIPS[key] ?? null);
+  const show = (key: string) => setTip(STAGE_TIPS[key] ?? ARROW_TIPS[key] ?? null);
   const hide = () => setTip(null);
   const g = (key: string) => ({ onMouseEnter: () => show(key), onMouseLeave: hide, style: { cursor: "default" } });
 
   return (
-    <div className="border border-border/50 bg-card rounded-lg px-4 py-3 space-y-2">
-      <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
-        Request Lifecycle
-      </span>
-      <svg viewBox="0 0 490 195" className="w-full" style={{ maxWidth: 560 }} aria-label="Request lifecycle diagram">
+    <div className="space-y-2 pt-3">
+      <svg viewBox="0 0 490 195" className="w-full" aria-label="Request lifecycle diagram">
         <defs>
           <marker id="lc-a"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#6b7280"/></marker>
           <marker id="lc-ar" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#f59e0b"/></marker>
@@ -292,10 +358,10 @@ function LifecycleDiagram() {
           <path d="M271,62 C271,20 38,20 38,62" fill="none" stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="4,3" markerEnd="url(#lc-ar)"/>
         </g>
 
-        {/* ── claimed → pending (short loop below, dashed amber) ── */}
+        {/* ── claimed → pending (short arc below, dashed amber) ── */}
         <g {...g("c→p")}>
-          <path d="M151,86 C151,110 38,110 38,86" fill="none" stroke="transparent" strokeWidth="10"/>
-          <path d="M151,86 C151,110 38,110 38,86" fill="none" stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="4,3" markerEnd="url(#lc-ar)"/>
+          <path d="M151,86 C151,106 34,106 34,86" fill="none" stroke="transparent" strokeWidth="10"/>
+          <path d="M151,86 C151,106 34,106 34,86" fill="none" stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="4,3" markerEnd="url(#lc-ar)"/>
         </g>
 
         {/* ── claimed → failed (red diagonal) ── */}
@@ -312,13 +378,94 @@ function LifecycleDiagram() {
 
         {/* ── failed → pending (manual sweep, dashed gray, bottom) ── */}
         <g {...g("f→p")}>
-          <path d="M235,158 C160,182 38,182 38,86" fill="none" stroke="transparent" strokeWidth="10"/>
-          <path d="M235,158 C160,182 38,182 38,86" fill="none" stroke="#6b7280" strokeWidth="1.2" strokeDasharray="4,3" markerEnd="url(#lc-a)"/>
+          <path d="M235,158 C160,185 14,185 14,86" fill="none" stroke="transparent" strokeWidth="10"/>
+          <path d="M235,158 C160,185 14,185 14,86" fill="none" stroke="#6b7280" strokeWidth="1.2" strokeDasharray="4,3" markerEnd="url(#lc-a)"/>
           <text x="136" y="191" textAnchor="middle" fontSize="9" fontFamily="monospace" fill="#6b7280" opacity="0.7">manual sweep</text>
         </g>
       </svg>
 
-      {/* Tooltip */}
+      <div className="h-4 min-h-[16px]">
+        {tip && <p className="text-[10px] font-mono text-muted-foreground">{tip}</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  LZ Lifecycle Diagram                                               */
+/* ------------------------------------------------------------------ */
+
+const LZ_STAGE_TIPS: Record<string, string> = {
+  pending:   "DVNs picking up and verifying the message. Also shown as confirming.",
+  inflight:  "DVNs approved. Executor submitting lzReceive on destination. Often too brief to observe.",
+  delivered: "Message executed on destination chain. Funds received.",
+  failed:    "Execution failed or blocked. Covers failed and blocked raw statuses.",
+};
+
+const LZ_ARROW_TIPS: Record<string, string> = {
+  "p→if":  "All configured DVN signatures collected.",
+  "if→d":  "Executor submits lzReceive; destination chain confirms.",
+  "p→f":   "DVN verification failed or message permanently rejected.",
+  "if→f":  "lzReceive reverted on destination.",
+};
+
+function LzLifecycleDiagram() {
+  const [tip, setTip] = useState<string | null>(null);
+  const show = (key: string) => setTip(LZ_STAGE_TIPS[key] ?? LZ_ARROW_TIPS[key] ?? null);
+  const hide = () => setTip(null);
+  const g = (key: string) => ({ onMouseEnter: () => show(key), onMouseLeave: hide, style: { cursor: "default" } });
+
+  return (
+    <div className="space-y-2">
+      <svg viewBox="0 0 490 195" className="w-full" aria-label="LayerZero lifecycle diagram">
+        <defs>
+          <marker id="lz-a"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#6b7280"/></marker>
+          <marker id="lz-af" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#ef4444"/></marker>
+        </defs>
+
+        {/* ── Stage boxes ── */}
+        <g {...g("pending")}>
+          <rect x="5"   y="50" width="72" height="24" rx="4" fill="rgba(245,158,11,.08)"  stroke="#f59e0b" strokeWidth="1"/>
+          <text x="41"  y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#f59e0b">pending</text>
+        </g>
+        <g {...g("inflight")}>
+          <rect x="155" y="50" width="72" height="24" rx="4" fill="rgba(192,132,252,.08)" stroke="#c084fc" strokeWidth="1"/>
+          <text x="191" y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#c084fc">inflight</text>
+        </g>
+        <g {...g("delivered")}>
+          <rect x="370" y="50" width="84" height="24" rx="4" fill="rgba(16,185,129,.08)"  stroke="#10b981" strokeWidth="1"/>
+          <text x="412" y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#10b981">delivered</text>
+        </g>
+        <g {...g("failed")}>
+          <rect x="210" y="118" width="60" height="24" rx="4" fill="rgba(239,68,68,.08)"  stroke="#ef4444" strokeWidth="1"/>
+          <text x="240" y="134" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#ef4444">failed</text>
+        </g>
+
+        {/* ── Happy path ── */}
+        <g {...g("p→if")}>
+          <line x1="77"  y1="62" x2="153" y2="62" stroke="transparent" strokeWidth="10"/>
+          <line x1="77"  y1="62" x2="153" y2="62" stroke="#6b7280" strokeWidth="1.2" markerEnd="url(#lz-a)"/>
+        </g>
+        <g {...g("if→d")}>
+          <line x1="227" y1="62" x2="368" y2="62" stroke="transparent" strokeWidth="10"/>
+          <line x1="227" y1="62" x2="368" y2="62" stroke="#6b7280" strokeWidth="1.2" markerEnd="url(#lz-a)"/>
+          {/* label: transient */}
+          <text x="297" y="57" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="#6b7280" opacity="0.5">transient</text>
+        </g>
+
+        {/* ── PENDING → FAILED (red, diagonal) ── */}
+        <g {...g("p→f")}>
+          <path d="M41,74 L218,118" fill="none" stroke="transparent" strokeWidth="10"/>
+          <path d="M41,74 L218,118" fill="none" stroke="#ef4444" strokeWidth="1.2" markerEnd="url(#lz-af)"/>
+        </g>
+
+        {/* ── INFLIGHT → FAILED (red, vertical) ── */}
+        <g {...g("if→f")}>
+          <path d="M227,74 L227,118" fill="none" stroke="transparent" strokeWidth="10"/>
+          <path d="M227,74 L227,118" fill="none" stroke="#ef4444" strokeWidth="1.2" markerEnd="url(#lz-af)"/>
+        </g>
+      </svg>
+
       <div className="h-4 min-h-[16px]">
         {tip && <p className="text-[10px] font-mono text-muted-foreground">{tip}</p>}
       </div>
@@ -330,6 +477,15 @@ function LifecycleDiagram() {
 /*  Filter Bar                                                         */
 /* ------------------------------------------------------------------ */
 
+function useDebounce<T>(value: T, delay = 350): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
 function FilterBar({
   filter,
   onChange,
@@ -337,6 +493,14 @@ function FilterBar({
   filter: JobFeedFilter;
   onChange: (f: Partial<JobFeedFilter>) => void;
 }) {
+  const [addressInput, setAddressInput] = useState(filter.address ?? "");
+  const [vaultInput, setVaultInput] = useState(filter.vaultAddress ?? "");
+  const debouncedAddress = useDebounce(addressInput);
+  const debouncedVault = useDebounce(vaultInput);
+
+  useEffect(() => { onChange({ address: debouncedAddress || undefined }); }, [debouncedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onChange({ vaultAddress: debouncedVault || undefined }); }, [debouncedVault]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="border border-border/50 bg-card rounded-lg p-3">
       <div className="flex flex-wrap gap-2">
@@ -346,8 +510,8 @@ function FilterBar({
           <input
             type="text"
             placeholder="0x… sender or receiver"
-            value={filter.address ?? ""}
-            onChange={(e) => onChange({ address: e.target.value || undefined })}
+            value={addressInput}
+            onChange={(e) => setAddressInput(e.target.value)}
             className="flex-1 bg-muted/30 border border-border/50 rounded px-2 py-1 text-[11px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
           />
         </div>
@@ -358,8 +522,8 @@ function FilterBar({
           <input
             type="text"
             placeholder="0x… vault address"
-            value={filter.vaultAddress ?? ""}
-            onChange={(e) => onChange({ vaultAddress: e.target.value || undefined })}
+            value={vaultInput}
+            onChange={(e) => setVaultInput(e.target.value)}
             className="flex-1 bg-muted/30 border border-border/50 rounded px-2 py-1 text-[11px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
           />
         </div>
@@ -423,11 +587,27 @@ function FilterBar({
 /*  Job Row + Expanded detail                                          */
 /* ------------------------------------------------------------------ */
 
-function JobRow({ item, network }: { item: JobFeedItem; network: "mainnet" | "testnet" }) {
-  const [expanded, setExpanded] = useState(false);
+function JobRow({
+  item,
+  network,
+  highlightId,
+}: {
+  item: JobFeedItem;
+  network: "mainnet" | "testnet";
+  highlightId?: string;
+}) {
+  const [expanded, setExpanded] = useState(item.id === highlightId);
+  const [linkCopied, setLinkCopied] = useState(false);
   const srcMeta = eidToChainMeta(item.srcEid);
   const dstMeta = eidToChainMeta(item.dstEid);
   const stage = LIFECYCLE_STAGES.find((s) => s.key === item.status);
+
+  const copyLink = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(`${window.location.origin}/feed?job=${item.id}`);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1500);
+  };
 
   return (
     <>
@@ -435,34 +615,20 @@ function JobRow({ item, network }: { item: JobFeedItem; network: "mainnet" | "te
         className={cn(
           "border-b border-border/20 cursor-pointer transition-colors",
           expanded ? "bg-muted/20" : "hover:bg-muted/10",
+          item.id === highlightId && "ring-1 ring-inset ring-primary/20",
         )}
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
         onClick={() => setExpanded((v) => !v)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded((v) => !v);
-          }
-        }}
       >
-        {/* Expand toggle */}
         <td className="py-2 pl-3 text-muted-foreground">
           {expanded
             ? <ChevronDown className="h-3 w-3" />
             : <ChevronRight className="h-3 w-3" />}
         </td>
 
-        {/* Time */}
-        <td
-          className="py-2 pr-3 text-muted-foreground whitespace-nowrap"
-          suppressHydrationWarning
-        >
+        <td className="py-2 pr-3 text-muted-foreground whitespace-nowrap">
           {formatTimeAgo(item.createdAt)}
         </td>
 
-        {/* Direction */}
         <td className="py-2 pr-3">
           <span className={cn(
             "px-1.5 py-0.5 rounded text-[10px]",
@@ -474,24 +640,20 @@ function JobRow({ item, network }: { item: JobFeedItem; network: "mainnet" | "te
           </span>
         </td>
 
-        {/* Route */}
         <td className="py-2 pr-3 whitespace-nowrap">
           <span className="text-foreground">{srcMeta?.shortLabel ?? item.srcEid}</span>
           <ArrowRight className="inline h-3 w-3 mx-1 text-muted-foreground" />
           <span className="text-foreground">{dstMeta?.shortLabel ?? item.dstEid}</span>
         </td>
 
-        {/* Sender */}
-        <td className="py-2 pr-3">
+        <td className="py-2 pr-3 hidden sm:table-cell">
           <CopyableAddress address={item.sender} />
         </td>
 
-        {/* Amount */}
-        <td className="py-2 pr-3 text-right text-foreground tabular-nums">
+        <td className="py-2 pr-3 text-right text-foreground tabular-nums hidden sm:table-cell">
           ${formatUSDC(item.amount)}
         </td>
 
-        {/* Status */}
         <td className="py-2 pr-3">
           <span className={cn(
             "px-1.5 py-0.5 rounded text-[10px] border",
@@ -502,8 +664,7 @@ function JobRow({ item, network }: { item: JobFeedItem; network: "mainnet" | "te
           </span>
         </td>
 
-        {/* LZ status */}
-        <td className="py-2 pr-3">
+        <td className="py-2 pr-3 hidden md:table-cell">
           {item.lzStatus ? (
             <LzStatusBadge status={item.lzStatus} />
           ) : (
@@ -511,8 +672,7 @@ function JobRow({ item, network }: { item: JobFeedItem; network: "mainnet" | "te
           )}
         </td>
 
-        {/* Retries */}
-        <td className="py-2 pr-3 text-center">
+        <td className="py-2 pr-3 text-center hidden md:table-cell">
           {item.retryCount > 0 ? (
             <span className="text-amber-500">{item.retryCount}</span>
           ) : (
@@ -520,19 +680,30 @@ function JobRow({ item, network }: { item: JobFeedItem; network: "mainnet" | "te
           )}
         </td>
 
-        {/* Error (truncated) */}
-        <td className="py-2 max-w-[180px]">
+        <td className="py-2 max-w-[180px] hidden md:table-cell">
           {item.errorMessage ? (
             <span className="text-red-400/80 truncate block">{item.errorMessage}</span>
           ) : (
             <span className="text-muted-foreground/40">—</span>
           )}
         </td>
+
+        <td className="py-2 pr-3">
+          <button
+            onClick={copyLink}
+            title="Copy shareable link"
+            className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+          >
+            {linkCopied
+              ? <Check className="h-3 w-3 text-emerald-500" />
+              : <Link2 className="h-3 w-3" />}
+          </button>
+        </td>
       </tr>
 
       {expanded && (
         <tr className="border-b border-border/20 bg-muted/10">
-          <td colSpan={10} className="px-6 py-4">
+          <td colSpan={11} className="px-6 py-4">
             <ExpandedDetail item={item} network={network} />
           </td>
         </tr>
@@ -551,19 +722,19 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
   const lzBase = getLzScanBase(network);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] font-mono">
+    <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-4 text-[11px] font-mono">
       {/* Job details */}
       <div className="space-y-1.5">
         <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">Job</p>
-        <DetailRow label="ID" value={item.id} copyable />
-        <DetailRow label="Sender" value={item.sender} copyable />
-        <DetailRow label="Receiver" value={item.receiver} copyable />
-        <DetailRow label="Token" value={item.token} copyable />
-        <DetailRow label="Amount" value={`$${formatUSDC(item.amount)}`} />
+        <DetailRow label="ID"       value={item.id}       copyable adaptive />
+        <DetailRow label="Sender"   value={item.sender}   copyable adaptive />
+        <DetailRow label="Receiver" value={item.receiver} copyable adaptive />
+        <DetailRow label="Token"    value={item.token}    copyable adaptive />
+        <DetailRow label="Amount"   value={`$${formatUSDC(item.amount)}`} />
         {item.fee && <DetailRow label="Fee" value={`$${formatUSDC(item.fee)}`} />}
-        <DetailRow label="Retry count" value={String(item.retryCount)} />
-        <DetailRow label="Created" value={formatDateTime(item.createdAt)} />
-        <DetailRow label="Updated" value={formatDateTime(item.updatedAt)} />
+        <DetailRow label="Retries"  value={String(item.retryCount)} />
+        <DetailRow label="Created"  value={formatDateTime(item.createdAt)} />
+        <DetailRow label="Updated"  value={formatDateTime(item.updatedAt)} />
         {item.errorMessage && (
           <div className="mt-1 p-2 rounded bg-red-500/10 border border-red-500/20 text-red-400 break-all">
             {item.errorMessage}
@@ -577,21 +748,13 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
           {srcMeta?.label ?? `EID ${item.srcEid}`} (source)
         </p>
         {item.bridgeTxHash ? (
-          <>
-            <DetailRow label="Bridge TX" value={shortHash(item.bridgeTxHash)} copyable fullValue={item.bridgeTxHash} />
-            {srcMeta && (
-              <a
-                href={srcMeta.explorerTxUrl(item.bridgeTxHash)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-primary hover:underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                View on {srcMeta.label} explorer
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
-          </>
+          <DetailRow
+            label="Bridge TX"
+            value={shortHash(item.bridgeTxHash)}
+            copyable
+            fullValue={item.bridgeTxHash}
+            icon={srcMeta ? { href: srcMeta.explorerTxUrl(item.bridgeTxHash), chainKey: srcMeta.iconKey, label: `View on ${srcMeta.label}` } : undefined}
+          />
         ) : (
           <span className="text-muted-foreground">Not yet submitted</span>
         )}
@@ -600,7 +763,7 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
       {/* LZ delivery + remote chain */}
       <div className="space-y-1.5">
         <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
-          LZ Delivery → {dstMeta?.label ?? `EID ${item.dstEid}`}
+          LZ → {dstMeta?.label ?? `EID ${item.dstEid}`}
         </p>
         {item.lzStatus ? (
           <>
@@ -609,34 +772,22 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
               <LzStatusBadge status={item.lzStatus} />
             </div>
             {item.lzGuid && (
-              <>
-                <DetailRow label="GUID" value={shortHash(item.lzGuid)} copyable fullValue={item.lzGuid} />
-                <a
-                  href={`${lzBase}/tx/${item.lzGuid}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-primary hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  View on LayerZero Scan
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </>
+              <DetailRow
+                label="GUID"
+                value={shortHash(item.lzGuid)}
+                copyable
+                fullValue={item.lzGuid}
+                icon={{ href: `${lzBase}/tx/${item.lzGuid}`, chainKey: "layerzero", label: "LayerZero Scan" }}
+              />
             )}
-            {item.lzDstTxHash && dstMeta && (
-              <>
-                <DetailRow label="Dst TX" value={shortHash(item.lzDstTxHash)} copyable fullValue={item.lzDstTxHash} />
-                <a
-                  href={dstMeta.explorerTxUrl(item.lzDstTxHash)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-primary hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  View on {dstMeta.label} explorer
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </>
+            {item.lzDstTxHash && (
+              <DetailRow
+                label="Dst TX"
+                value={shortHash(item.lzDstTxHash)}
+                copyable
+                fullValue={item.lzDstTxHash}
+                icon={dstMeta ? { href: dstMeta.explorerTxUrl(item.lzDstTxHash), chainKey: dstMeta.iconKey, label: `View on ${dstMeta.label}` } : undefined}
+              />
             )}
           </>
         ) : (
@@ -651,35 +802,77 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
 /*  Small components                                                   */
 /* ------------------------------------------------------------------ */
 
-// LZ status set that maps to terminal failure rendering. Keep in sync with
-// pkg/lz/types.go → IsAlertable() and NormalizeForAPI(). The frontend may see
-// either the raw MessageStatus values stored in bridges.lz_status (e.g.
-// "DELIVERED", "FAILED") or the normalized "lz_*" form returned by the
-// tracking flow (e.g. "lz_delivered", "lz_failed"), so both shapes are
-// canonicalized before classification.
-const LZ_FAILURE_STATUSES = new Set([
-  "FAILED",
-  "BLOCKED",
-  "PAYLOAD_STORED",
-  "APP_BURNED",
-  "APP_SKIPPED",
-  "UNRESOLVABLE_CMD",
-  "MALFORMED_CMD",
-]);
+function ExplorerIconLink({ href, chainKey, label }: { href: string; chainKey: string; label: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={label}
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/5 border border-white/10 transition-all duration-200 hover:bg-white/15 hover:border-white/25 hover:shadow-[0_0_10px_rgba(255,255,255,0.3)]"
+    >
+      <ChainIcon chainKey={chainKey} className="w-3.5 h-3.5" />
+    </a>
+  );
+}
 
 function LzStatusBadge({ status }: { status: string }) {
-  // Normalize: strip the `lz_` prefix the backend uses for some flows and
-  // uppercase so both `lz_delivered` and `DELIVERED` map to the same key.
-  const canonical = status.replace(/^lz_/i, "").toUpperCase();
-  const tone =
-    canonical === "DELIVERED"
-      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
-      : LZ_FAILURE_STATUSES.has(canonical)
-      ? "bg-red-500/10 text-red-500 border-red-500/30"
-      : "bg-yellow-500/10 text-yellow-500 border-yellow-500/30";
+  const raw = status.toUpperCase();
+  // Strip "LZ_" prefix from DB-normalized values (e.g. lz_delivered → DELIVERED)
+  const up = raw.startsWith("LZ_") ? raw.slice(3) : raw;
+  const label = status.toLowerCase();
   return (
-    <span className={cn("px-1.5 py-0.5 rounded text-[10px] border", tone)}>
-      {canonical}
+    <span className={cn(
+      "px-1.5 py-0.5 rounded text-[10px] border",
+      up === "DELIVERED" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30" :
+      up === "FAILED" || up === "BLOCKED" ? "bg-red-500/10 text-red-500 border-red-500/30" :
+                          "bg-yellow-500/10 text-yellow-500 border-yellow-500/30",
+    )}>
+      {label}
+    </span>
+  );
+}
+
+function AdaptiveAddress({ address }: { address: string }) {
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [fits, setFits] = useState(true);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const measure = measureRef.current;
+    if (!container || !measure) return;
+    const check = () => setFits(measure.scrollWidth <= container.clientWidth);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [address]);
+
+  const prefix = address.slice(0, 6);
+  const middle = address.slice(6, -4);
+  const suffix = address.slice(-4);
+
+  return (
+    <span ref={containerRef} className="relative min-w-0 overflow-hidden flex-1 block">
+      {/* invisible full-text for measurement */}
+      <span ref={measureRef} className="invisible absolute whitespace-nowrap pointer-events-none" aria-hidden>
+        {address}
+      </span>
+      {fits ? (
+        <span className="whitespace-nowrap">
+          {prefix}
+          <span className="text-foreground/40">{middle}</span>
+          {suffix}
+        </span>
+      ) : (
+        <span className="whitespace-nowrap">
+          {address.slice(0, 10)}
+          <span className="text-foreground/40">…</span>
+          {address.slice(-6)}
+        </span>
+      )}
     </span>
   );
 }
@@ -689,11 +882,15 @@ function DetailRow({
   value,
   copyable,
   fullValue,
+  adaptive,
+  icon,
 }: {
   label: string;
   value: string;
   copyable?: boolean;
   fullValue?: string;
+  adaptive?: boolean;
+  icon?: { href: string; chainKey: string; label: string };
 }) {
   const [copied, setCopied] = useState(false);
   const copy = (e: React.MouseEvent) => {
@@ -703,19 +900,19 @@ function DetailRow({
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-muted-foreground min-w-[70px]">{label}</span>
-      <span className="text-foreground">{value}</span>
+    <div className="flex items-center gap-1.5 min-w-0">
+      <span className="text-muted-foreground shrink-0 min-w-[70px]">{label}</span>
+      {adaptive ? (
+        <AdaptiveAddress address={value} />
+      ) : (
+        <span className="text-foreground truncate">{value}</span>
+      )}
       {copyable && (
-        <button
-          onClick={copy}
-          aria-label={copied ? `${label} copied` : `Copy ${label}`}
-          title={`Copy ${label}`}
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
+        <button onClick={copy} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
           {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
         </button>
       )}
+      {icon && <ExplorerIconLink href={icon.href} chainKey={icon.chainKey} label={icon.label} />}
     </div>
   );
 }
@@ -729,12 +926,7 @@ function CopyableAddress({ address }: { address: string }) {
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <button
-      onClick={copy}
-      aria-label={copied ? "Address copied" : "Copy address"}
-      title="Copy address"
-      className="flex items-center gap-1 text-foreground hover:text-primary transition-colors group"
-    >
+    <button onClick={copy} className="flex items-center gap-1 text-foreground hover:text-primary transition-colors group">
       <span>{shortAddr(address)}</span>
       {copied
         ? <Check className="h-3 w-3 text-emerald-500" />
@@ -764,7 +956,9 @@ function formatUSDC(raw: string | null | undefined): string {
 }
 
 function formatTimeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "—";
+  const diff = Date.now() - date.getTime();
   const mins = Math.floor(diff / 60_000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m`;
@@ -774,34 +968,10 @@ function formatTimeAgo(iso: string): string {
 }
 
 function formatDateTime(iso: string): string {
-  // Fixed UTC format with year so historical rows are unambiguous and
-  // server/client renders agree (avoids hydration mismatch from locale).
-  return (
-    new Date(iso).toLocaleString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-      timeZone: "UTC",
-    }) + " UTC"
-  );
-}
-
-// Pull the most useful human-readable string out of an unknown error so the
-// UI never displays "[object Object]" for plain-object rejections.
-function extractErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err && typeof err === "object" && "message" in err) {
-    const msg = (err as { message?: unknown }).message;
-    if (typeof msg === "string" && msg.length > 0) return msg;
-  }
-  if (typeof err === "string") return err;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return "Unknown error";
-  }
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
 }

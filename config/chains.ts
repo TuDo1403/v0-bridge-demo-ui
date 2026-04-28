@@ -113,7 +113,7 @@ export const riseMainnetChain: Chain = {
     default: { http: [RISE_MAINNET_RPC_URL] },
   },
   blockExplorers: {
-    default: { name: "RISE Explorer", url: "https://explorer.riselabs.xyz" },
+    default: { name: "RISE Explorer", url: "https://explorer.risechain.com" },
   },
   testnet: false,
 };
@@ -197,7 +197,7 @@ export const CHAINS: Record<number, ChainMeta> = {
     shortLabel: "RISE",
     iconKey: "rise",
     explorerTxUrl: (h) =>
-      `${process.env.NEXT_PUBLIC_RISE_EXPLORER_URL ?? "https://explorer.riselabs.xyz"}/tx/${h}`,
+      `https://explorer.risechain.com/tx/${h}`,
     network: "mainnet",
   },
 };

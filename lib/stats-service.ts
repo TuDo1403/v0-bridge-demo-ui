@@ -110,6 +110,7 @@ export interface JobFeedFilter {
   status?: string;
   direction?: string;
   range?: TimeRange;
+  jobId?: string;
 }
 
 // ── Fetchers ─────────────────────────────────────────────────────────────────
@@ -152,6 +153,61 @@ export async function fetchSyncProgress(
   return res.json();
 }
 
+export async function fetchJobById(
+  id: string,
+  network: "mainnet" | "testnet" = "mainnet",
+): Promise<JobFeedItem | null> {
+  const res = await fetch(`/api/bridge/status?jobId=${encodeURIComponent(id)}&net=${network}`, { cache: "no-store" });
+  if (!res.ok) return null;
+  const s = await res.json();
+  const bridgeTx = (s.transactions ?? []).find((t: { txType: string }) => t.txType === "operator_bridge");
+
+  // Best-effort LZ enrichment using the bridge tx hash
+  let lzStatus: string | null = null;
+  let lzGuid: string | null = null;
+  let lzDstTxHash: string | null = null;
+  if (bridgeTx?.txHash) {
+    try {
+      const lzRes = await fetch(
+        `/api/lz/lookup?hash=${encodeURIComponent(bridgeTx.txHash)}&net=${network}`,
+        { cache: "no-store" },
+      );
+      if (lzRes.ok) {
+        const lzBody = await lzRes.json();
+        const msg = lzBody?.messages?.[0];
+        if (msg) {
+          lzStatus    = (msg.status?.name as string) ?? null;
+          lzGuid      = (msg.guid as string) ?? null;
+          lzDstTxHash = (msg.destination?.tx?.txHash as string) ?? null;
+        }
+      }
+    } catch {
+      // LZ lookup is best-effort; missing data is acceptable
+    }
+  }
+
+  return {
+    id: s.jobId,
+    status: s.status,
+    direction: s.direction,
+    sender: s.sender,
+    receiver: s.receiver,
+    token: s.token,
+    amount: s.amount,
+    fee: s.feeAmount ?? null,
+    srcEid: s.srcEid,
+    dstEid: s.dstEid,
+    errorMessage: s.error ?? null,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    retryCount: s.retryCount ?? 0,
+    bridgeTxHash: bridgeTx?.txHash ?? null,
+    lzStatus,
+    lzGuid,
+    lzDstTxHash,
+  };
+}
+
 export async function fetchJobFeed(
   filter: JobFeedFilter,
   limit: number,
@@ -164,6 +220,7 @@ export async function fetchJobFeed(
   if (filter.status) params.set("status", filter.status);
   if (filter.direction) params.set("direction", filter.direction);
   if (filter.range) params.set("range", filter.range);
+  if (filter.jobId) params.set("id", filter.jobId);
   const res = await fetch(`${API_BASE}/jobs/feed?${params}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to fetch job feed");
   return res.json();
