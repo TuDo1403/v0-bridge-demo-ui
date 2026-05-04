@@ -34,6 +34,14 @@ const PAGE_SIZE = 25;
 
 const STATUSES = ["pending", "claimed", "submitted", "completed", "failed"] as const;
 
+const JOB_STAGES = [
+  { key: "pending",   color: "text-yellow-500", bg: "bg-yellow-500/10 border-yellow-500/30" },
+  { key: "claimed",   color: "text-blue-400",   bg: "bg-blue-400/10 border-blue-400/30" },
+  { key: "submitted", color: "text-purple-400",  bg: "bg-purple-400/10 border-purple-400/30" },
+  { key: "completed", color: "text-emerald-500", bg: "bg-emerald-500/10 border-emerald-500/30" },
+  { key: "failed",    color: "text-red-500",     bg: "bg-red-500/10 border-red-500/30" },
+] as const;
+
 const TIME_RANGES: { label: string; value: TimeRange }[] = [
   { label: "24h", value: "24h" },
   { label: "7d", value: "7d" },
@@ -41,51 +49,54 @@ const TIME_RANGES: { label: string; value: TimeRange }[] = [
   { label: "All", value: "all" },
 ];
 
-const HAPPY_PATH = [
+// Derived 3-state bridge status shown in the table, computed from job + LZ data.
+const BRIDGE_STAGES = [
   {
     key: "pending",
     label: "Pending",
     color: "text-yellow-500",
     bg: "bg-yellow-500/10 border-yellow-500/30",
-    dot: "bg-yellow-500",
-    hint: "Job created, waiting to be claimed by an operator.",
+    hint: "Waiting for bridge TX to be submitted on source chain.",
   },
   {
-    key: "claimed",
-    label: "Claimed",
+    key: "unfinalized",
+    label: "Unfinalized",
     color: "text-blue-400",
     bg: "bg-blue-400/10 border-blue-400/30",
-    dot: "bg-blue-400",
-    hint: "Picked up by an operator. TX being prepared and signed.",
+    hint: "Bridge TX on source chain but not yet finalized (confirmed_at not set).",
   },
   {
-    key: "submitted",
-    label: "Submitted",
-    color: "text-purple-400",
-    bg: "bg-purple-400/10 border-purple-400/30",
-    dot: "bg-purple-400",
-    hint: "TX broadcast on-chain. Waiting for confirmation and LZ delivery.",
-  },
-  {
-    key: "completed",
-    label: "Completed",
+    key: "finalized",
+    label: "Finalized",
     color: "text-emerald-500",
     bg: "bg-emerald-500/10 border-emerald-500/30",
-    dot: "bg-emerald-500",
-    hint: "Bridge confirmed on-chain. Funds delivered to destination.",
+    hint: "Bridge TX finalized on source chain (confirmed_at set).",
+  },
+  {
+    key: "failed",
+    label: "Failed",
+    color: "text-red-500",
+    bg: "bg-red-500/10 border-red-500/30",
+    hint: "TX reverted, max retries exceeded, or LZ delivery failed.",
   },
 ] as const;
 
-const FAILED_STAGE = {
-  key: "failed",
-  label: "Failed",
-  color: "text-red-500",
-  bg: "bg-red-500/10 border-red-500/30",
-  dot: "bg-red-500",
-  hint: "TX reverted or max retries exceeded. If within retry limit, job is re-queued back to Pending.",
-} as const;
+type BridgeStatus = typeof BRIDGE_STAGES[number]["key"];
 
-const LIFECYCLE_STAGES = [...HAPPY_PATH, FAILED_STAGE] as const;
+const LZ_TERMINAL_FAILURES = new Set([
+  "FAILED", "BLOCKED", "PAYLOAD_STORED",
+  "APPLICATION_BURNED", "APPLICATION_SKIPPED",
+  "UNRESOLVABLE_COMMAND", "MALFORMED_COMMAND",
+]);
+
+function deriveBridgeStatus(item: JobFeedItem): BridgeStatus {
+  if (item.status === "failed") return "failed";
+  const lzUp = (item.lzStatus ?? "").toUpperCase().replace(/^LZ_/, "");
+  if (LZ_TERMINAL_FAILURES.has(lzUp)) return "failed";
+  if (item.confirmedAt || lzUp === "DELIVERED") return "finalized";
+  if (item.bridgeTxHash) return "unfinalized";
+  return "pending";
+}
 
 /* ------------------------------------------------------------------ */
 /*  FeedPage                                                           */
@@ -187,7 +198,7 @@ export function FeedPage() {
                       <th className="text-left py-2 pr-3 hidden sm:table-cell">Sender</th>
                       <th className="text-right py-2 pr-3 hidden sm:table-cell">Amount</th>
                       <th className="text-left py-2 pr-3">Status</th>
-                      <th className="text-left py-2 pr-3 hidden md:table-cell">LZ</th>
+                      <th className="text-left py-2 pr-3 hidden md:table-cell">Bridge</th>
                       <th className="text-center py-2 pr-3 hidden md:table-cell">Retries</th>
                       <th className="text-left py-2 hidden md:table-cell">Error</th>
                       <th className="w-6 py-2 pr-3" />
@@ -244,7 +255,7 @@ export function FeedPage() {
 const STAGE_TIPS: Record<string, string> = {
   pending:   "Waiting to be picked up by an operator.",
   claimed:   "Locked by an operator — TX being built and signed.",
-  submitted: "TX broadcast on-chain. Awaiting receipt and LZ delivery.",
+  submitted: "TX broadcast on-chain. Awaiting bridge event and LZ delivery.",
   completed: "Bridge confirmed. Funds delivered to destination.",
   failed:    "Terminal failure — max retries exhausted or TX permanently rejected.",
 };
@@ -288,8 +299,8 @@ function LifecyclePanel() {
               <LifecycleDiagram />
             </div>
             <div className="mt-3 border-t border-border/20 pt-3 md:mt-0 md:border-t-0 md:pt-0">
-              <p className="text-[9px] font-mono uppercase text-muted-foreground/60 tracking-wider pt-3 pb-1">LayerZero</p>
-              <LzLifecycleDiagram />
+              <p className="text-[9px] font-mono uppercase text-muted-foreground/60 tracking-wider pt-3 pb-1">Bridge Status</p>
+              <BridgeStatusDiagram />
             </div>
           </div>
           <p className="text-[9px] font-mono italic text-muted-foreground/40 mt-2 text-center">
@@ -395,46 +406,46 @@ function LifecycleDiagram() {
 /*  LZ Lifecycle Diagram                                               */
 /* ------------------------------------------------------------------ */
 
-const LZ_STAGE_TIPS: Record<string, string> = {
-  pending:   "DVNs picking up and verifying the message. Also shown as confirming.",
-  inflight:  "DVNs approved. Executor submitting lzReceive on destination. Often too brief to observe.",
-  delivered: "Message executed on destination chain. Funds received.",
-  failed:    "Execution failed or blocked. Covers failed and blocked raw statuses.",
+const BRIDGE_STATUS_TIPS: Record<string, string> = {
+  pending:     "Bridge TX not yet submitted on source chain.",
+  unfinalized: "Bridge TX on source chain but not yet finalized (confirmed_at not set).",
+  finalized:   "Bridge TX finalized on source chain (confirmed_at set).",
+  failed:      "TX reverted, LZ delivery failed, or message permanently blocked.",
 };
 
-const LZ_ARROW_TIPS: Record<string, string> = {
-  "p→if":  "All configured DVN signatures collected.",
-  "if→d":  "Executor submits lzReceive; destination chain confirms.",
-  "p→f":   "DVN verification failed or message permanently rejected.",
-  "if→f":  "lzReceive reverted on destination.",
+const BRIDGE_STATUS_ARROW_TIPS: Record<string, string> = {
+  "p→u":    "Bridge TX submitted and detected on source chain.",
+  "u→f":    "Source chain finalizes the bridge TX (confirmed_at set).",
+  "p→f":    "TX reverted or max retries exceeded before bridge TX.",
+  "u→fail": "LZ delivery failed or message permanently blocked.",
 };
 
-function LzLifecycleDiagram() {
+function BridgeStatusDiagram() {
   const [tip, setTip] = useState<string | null>(null);
-  const show = (key: string) => setTip(LZ_STAGE_TIPS[key] ?? LZ_ARROW_TIPS[key] ?? null);
+  const show = (key: string) => setTip(BRIDGE_STATUS_TIPS[key] ?? BRIDGE_STATUS_ARROW_TIPS[key] ?? null);
   const hide = () => setTip(null);
   const g = (key: string) => ({ onMouseEnter: () => show(key), onMouseLeave: hide, style: { cursor: "default" } });
 
   return (
     <div className="space-y-2">
-      <svg viewBox="0 0 490 195" className="w-full" aria-label="LayerZero lifecycle diagram">
+      <svg viewBox="0 0 490 165" className="w-full" aria-label="Bridge status diagram">
         <defs>
-          <marker id="lz-a"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#6b7280"/></marker>
-          <marker id="lz-af" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#ef4444"/></marker>
+          <marker id="bs-a"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#6b7280"/></marker>
+          <marker id="bs-af" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0.5 L6,3.5 L0,6.5 Z" fill="#ef4444"/></marker>
         </defs>
 
         {/* ── Stage boxes ── */}
         <g {...g("pending")}>
-          <rect x="5"   y="50" width="72" height="24" rx="4" fill="rgba(245,158,11,.08)"  stroke="#f59e0b" strokeWidth="1"/>
-          <text x="41"  y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#f59e0b">pending</text>
+          <rect x="5"   y="50" width="72" height="24" rx="4" fill="rgba(234,179,8,.08)"   stroke="#eab308" strokeWidth="1"/>
+          <text x="41"  y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#eab308">pending</text>
         </g>
-        <g {...g("inflight")}>
-          <rect x="155" y="50" width="72" height="24" rx="4" fill="rgba(192,132,252,.08)" stroke="#c084fc" strokeWidth="1"/>
-          <text x="191" y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#c084fc">inflight</text>
+        <g {...g("unfinalized")}>
+          <rect x="155" y="50" width="90" height="24" rx="4" fill="rgba(96,165,250,.08)"  stroke="#60a5fa" strokeWidth="1"/>
+          <text x="200" y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#60a5fa">unfinalized</text>
         </g>
-        <g {...g("delivered")}>
-          <rect x="370" y="50" width="84" height="24" rx="4" fill="rgba(16,185,129,.08)"  stroke="#10b981" strokeWidth="1"/>
-          <text x="412" y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#10b981">delivered</text>
+        <g {...g("finalized")}>
+          <rect x="370" y="50" width="78" height="24" rx="4" fill="rgba(16,185,129,.08)"  stroke="#10b981" strokeWidth="1"/>
+          <text x="409" y="66" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#10b981">finalized</text>
         </g>
         <g {...g("failed")}>
           <rect x="210" y="118" width="60" height="24" rx="4" fill="rgba(239,68,68,.08)"  stroke="#ef4444" strokeWidth="1"/>
@@ -442,27 +453,24 @@ function LzLifecycleDiagram() {
         </g>
 
         {/* ── Happy path ── */}
-        <g {...g("p→if")}>
+        <g {...g("p→u")}>
           <line x1="77"  y1="62" x2="153" y2="62" stroke="transparent" strokeWidth="10"/>
-          <line x1="77"  y1="62" x2="153" y2="62" stroke="#6b7280" strokeWidth="1.2" markerEnd="url(#lz-a)"/>
+          <line x1="77"  y1="62" x2="153" y2="62" stroke="#6b7280" strokeWidth="1.2" markerEnd="url(#bs-a)"/>
         </g>
-        <g {...g("if→d")}>
-          <line x1="227" y1="62" x2="368" y2="62" stroke="transparent" strokeWidth="10"/>
-          <line x1="227" y1="62" x2="368" y2="62" stroke="#6b7280" strokeWidth="1.2" markerEnd="url(#lz-a)"/>
-          {/* label: transient */}
-          <text x="297" y="57" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="#6b7280" opacity="0.5">transient</text>
+        <g {...g("u→f")}>
+          <line x1="245" y1="62" x2="368" y2="62" stroke="transparent" strokeWidth="10"/>
+          <line x1="245" y1="62" x2="368" y2="62" stroke="#6b7280" strokeWidth="1.2" markerEnd="url(#bs-a)"/>
+          <text x="305" y="57" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="#6b7280" opacity="0.5">src finalized</text>
         </g>
 
-        {/* ── PENDING → FAILED (red, diagonal) ── */}
+        {/* ── Failure paths ── */}
         <g {...g("p→f")}>
           <path d="M41,74 L218,118" fill="none" stroke="transparent" strokeWidth="10"/>
-          <path d="M41,74 L218,118" fill="none" stroke="#ef4444" strokeWidth="1.2" markerEnd="url(#lz-af)"/>
+          <path d="M41,74 L218,118" fill="none" stroke="#ef4444" strokeWidth="1.2" markerEnd="url(#bs-af)"/>
         </g>
-
-        {/* ── INFLIGHT → FAILED (red, vertical) ── */}
-        <g {...g("if→f")}>
+        <g {...g("u→fail")}>
           <path d="M227,74 L227,118" fill="none" stroke="transparent" strokeWidth="10"/>
-          <path d="M227,74 L227,118" fill="none" stroke="#ef4444" strokeWidth="1.2" markerEnd="url(#lz-af)"/>
+          <path d="M227,74 L227,118" fill="none" stroke="#ef4444" strokeWidth="1.2" markerEnd="url(#bs-af)"/>
         </g>
       </svg>
 
@@ -600,7 +608,8 @@ function JobRow({
   const [linkCopied, setLinkCopied] = useState(false);
   const srcMeta = eidToChainMeta(item.srcEid);
   const dstMeta = eidToChainMeta(item.dstEid);
-  const stage = LIFECYCLE_STAGES.find((s) => s.key === item.status);
+  const bridgeStatus = deriveBridgeStatus(item);
+  const jobStage = JOB_STAGES.find((s) => s.key === item.status);
 
   const copyLink = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -657,19 +666,15 @@ function JobRow({
         <td className="py-2 pr-3">
           <span className={cn(
             "px-1.5 py-0.5 rounded text-[10px] border",
-            stage?.bg ?? "bg-muted/30 border-border/50",
-            stage?.color ?? "text-muted-foreground",
+            jobStage?.bg ?? "bg-muted/30 border-border/50",
+            jobStage?.color ?? "text-muted-foreground",
           )}>
             {item.status}
           </span>
         </td>
 
         <td className="py-2 pr-3 hidden md:table-cell">
-          {item.lzStatus ? (
-            <LzStatusBadge status={item.lzStatus} />
-          ) : (
-            <span className="text-muted-foreground/40">—</span>
-          )}
+          <BridgeStatusBadge status={bridgeStatus} />
         </td>
 
         <td className="py-2 pr-3 text-center hidden md:table-cell">
@@ -765,13 +770,13 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
         <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
           LZ → {dstMeta?.label ?? `EID ${item.dstEid}`}
         </p>
-        {item.lzStatus ? (
+        {item.bridgeTxHash ? (
           <>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">Status</span>
-              <LzStatusBadge status={item.lzStatus} />
+              <BridgeStatusBadge status={deriveBridgeStatus(item)} />
             </div>
-            {item.lzGuid && (
+            {item.lzGuid ? (
               <DetailRow
                 label="GUID"
                 value={shortHash(item.lzGuid)}
@@ -779,6 +784,8 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
                 fullValue={item.lzGuid}
                 icon={{ href: `${lzBase}/tx/${item.lzGuid}`, chainKey: "layerzero", label: "LayerZero Scan" }}
               />
+            ) : (
+              <span className="text-muted-foreground/60">Awaiting LZ indexing</span>
             )}
             {item.lzDstTxHash && (
               <DetailRow
@@ -791,7 +798,7 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
             )}
           </>
         ) : (
-          <span className="text-muted-foreground">Awaiting bridge confirmation</span>
+          <span className="text-muted-foreground">Awaiting bridge TX</span>
         )}
       </div>
     </div>
@@ -817,19 +824,15 @@ function ExplorerIconLink({ href, chainKey, label }: { href: string; chainKey: s
   );
 }
 
-function LzStatusBadge({ status }: { status: string }) {
-  const raw = status.toUpperCase();
-  // Strip "LZ_" prefix from DB-normalized values (e.g. lz_delivered → DELIVERED)
-  const up = raw.startsWith("LZ_") ? raw.slice(3) : raw;
-  const label = status.toLowerCase();
+function BridgeStatusBadge({ status }: { status: BridgeStatus }) {
+  const stage = BRIDGE_STAGES.find((s) => s.key === status);
   return (
     <span className={cn(
       "px-1.5 py-0.5 rounded text-[10px] border",
-      up === "DELIVERED" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30" :
-      up === "FAILED" || up === "BLOCKED" ? "bg-red-500/10 text-red-500 border-red-500/30" :
-                          "bg-yellow-500/10 text-yellow-500 border-yellow-500/30",
+      stage?.bg ?? "bg-muted/30 border-border/50",
+      stage?.color ?? "text-muted-foreground",
     )}>
-      {label}
+      {stage?.label ?? status}
     </span>
   );
 }
