@@ -97,13 +97,6 @@ export const riseGlobalDepositAbi = [
   },
   {
     type: "function",
-    name: "getAccountVaultImplementation",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
     name: "getDapp",
     inputs: [{ name: "dappId", type: "uint16" }],
     outputs: [
@@ -111,19 +104,12 @@ export const riseGlobalDepositAbi = [
         name: "",
         type: "tuple",
         components: [
-          { name: "vaultImpl", type: "address" },
+          { name: "deprecated", type: "address" },
           { name: "composer", type: "address" },
           { name: "lzComposeGas", type: "uint40" },
         ],
       },
     ],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "getVaultImpl",
-    inputs: [{ name: "dappId", type: "uint16" }],
-    outputs: [{ name: "", type: "address" }],
     stateMutability: "view",
   },
   {
@@ -134,13 +120,6 @@ export const riseGlobalDepositAbi = [
       { name: "token", type: "address" },
     ],
     outputs: [{ name: "", type: "bool" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "getSrcEid",
-    inputs: [],
-    outputs: [{ name: "", type: "uint32" }],
     stateMutability: "view",
   },
   {
@@ -326,28 +305,6 @@ export const riseGlobalWithdrawAbi = [
   },
   {
     type: "function",
-    name: "getRateLimitBucket",
-    inputs: [
-      { name: "token", type: "address" },
-      { name: "dstEid", type: "uint32" },
-    ],
-    outputs: [
-      {
-        name: "bucket",
-        type: "tuple",
-        components: [
-          { name: "capacity", type: "uint128" },
-          { name: "refillPerBlock", type: "uint128" },
-          { name: "available", type: "uint128" },
-          { name: "lastBlock", type: "uint64" },
-          { name: "enabled", type: "bool" },
-        ],
-      },
-    ],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
     name: "getLaneRateLimitBucket",
     inputs: [{ name: "dstEid", type: "uint32" }],
     outputs: [
@@ -377,20 +334,6 @@ export const riseGlobalWithdrawAbi = [
     name: "getLanes",
     inputs: [],
     outputs: [{ name: "", type: "uint32[]" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "getVaultImplementation",
-    inputs: [{ name: "dstEid", type: "uint32" }],
-    outputs: [{ name: "", type: "address" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "getSrcEid",
-    inputs: [],
-    outputs: [{ name: "", type: "uint32" }],
     stateMutability: "view",
   },
   {
@@ -600,13 +543,6 @@ export const riseVaultAbi = [
     name: "getFactory",
     inputs: [],
     outputs: [{ name: "", type: "address" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "getSrcEid",
-    inputs: [],
-    outputs: [{ name: "", type: "uint32" }],
     stateMutability: "view",
   },
   {

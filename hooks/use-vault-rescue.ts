@@ -60,14 +60,6 @@ export function useVaultInfo(vaultAddress: Address | undefined, chainId: number 
     query: { enabled },
   });
 
-  const { data: srcEid } = useReadContract({
-    address: vaultAddress,
-    abi: riseVaultAbi,
-    functionName: "getSrcEid",
-    chainId,
-    query: { enabled },
-  });
-
   const { data: dstEid } = useReadContract({
     address: vaultAddress,
     abi: riseVaultAbi,
@@ -88,7 +80,6 @@ export function useVaultInfo(vaultAddress: Address | undefined, chainId: number 
     srcAddress: srcAddress as Address | undefined,
     dstAddress: dstAddress as Address | undefined,
     dappId: dappId as number | undefined,
-    srcEid: srcEid as number | undefined,
     dstEid: dstEid as number | undefined,
     factory: factory as Address | undefined,
     isLoading: loadingSrc || loadingDst,

@@ -656,7 +656,7 @@ export function VaultDisplay({
               <ChainIcon chainKey={chain?.iconKey} className="h-3.5 w-3.5" />
               <span className="text-[11px] font-mono text-foreground">{chain?.label}</span>
               <span className="text-[9px] font-mono text-muted-foreground">
-                EID {vaultInfo.srcEid}
+                EID {chain?.lzEid}
               </span>
             </div>
             {vaultInfo.srcAddress && (

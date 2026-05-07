@@ -549,10 +549,10 @@ export function BridgePanel() {
   const { data: rateLimitBucket } = useReadContract({
     address: globalWithdrawAddr,
     abi: riseGlobalWithdrawAbi,
-    functionName: "getRateLimitBucket",
-    args: tokenAddress && destLzEid ? [tokenAddress, destLzEid] : undefined,
+    functionName: "getLaneRateLimitBucket",
+    args: destLzEid ? [destLzEid] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !isDeposit && !!globalWithdrawAddr && !!tokenAddress && !!destLzEid, refetchInterval: 10_000, retry: 3, retryDelay: 2000 },
+    query: { enabled: !isDeposit && !!globalWithdrawAddr && !!destLzEid, refetchInterval: 10_000, retry: 3, retryDelay: 2000 },
   });
 
   const rateLimitInfo = rateLimitBucket && (rateLimitBucket as { enabled: boolean }).enabled
@@ -562,8 +562,9 @@ export function BridgePanel() {
       }
     : null;
 
+  // OFT lane limits are USD-denominated with 18 decimals, independent of the selected token decimals.
   const rateLimitLabel = rateLimitInfo && token
-    ? `${Number(formatUnits(rateLimitInfo.available, token.decimals)).toLocaleString(undefined, { maximumFractionDigits: 0 })}/${Number(formatUnits(rateLimitInfo.capacity, token.decimals)).toLocaleString(undefined, { maximumFractionDigits: 0 })} ${token.symbol}`
+    ? `${Number(formatUnits(rateLimitInfo.available, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })}/${Number(formatUnits(rateLimitInfo.capacity, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} USD`
     : undefined;
 
   // --- Lane pause check (withdrawals only) ---

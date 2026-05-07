@@ -69,19 +69,22 @@ export function useDappList(sourceChainId: number): UseDappListReturn {
       const result = data?.[i];
       if (result?.status === "success" && result.result) {
         const info = result.result as unknown as {
-          vaultImpl: Address;
+          deprecated: Address;
           composer: Address;
           lzComposeGas: number | bigint;
         };
+        const hasComposer = info.composer !== "0x0000000000000000000000000000000000000000";
         return {
           ...meta,
-          available: info.vaultImpl !== "0x0000000000000000000000000000000000000000",
+          // dappId 0 is the built-in direct bridge path and has no composer contract.
+          available: meta.dappId === 0 || hasComposer,
           composer: info.composer,
-          vaultImpl: info.vaultImpl,
+          vaultImpl: info.deprecated,
         };
       }
       return {
         ...meta,
+        // Keep the built-in direct bridge selectable while fallback reads are loading or unavailable.
         available: meta.dappId === 0,
         composer: "0x0000000000000000000000000000000000000000" as Address,
         vaultImpl: "0x0000000000000000000000000000000000000000" as Address,

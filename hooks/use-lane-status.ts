@@ -7,7 +7,6 @@ import { riseGlobalWithdrawAbi } from "@/lib/abi";
 import {
   getGlobalWithdrawAddress,
   getGlobalDepositAddress,
-  getTokenAddress,
 } from "@/config/contracts";
 import { CHAINS } from "@/config/chains";
 import { useNetworkStore, NETWORK_CHAIN_IDS } from "@/lib/network-store";
@@ -22,7 +21,7 @@ interface UseLaneStatusReturn {
  * Fetches real on-chain lane status from the GlobalWithdraw contract.
  *
  * Withdrawal lanes: getLanes() returns registered dstEids.
- * For each lane: isLanePaused(eid) + getRateLimitBucket(usdcAddr, eid).
+ * For each lane: isLanePaused(eid) + getLaneRateLimitBucket(eid).
  *
  * Deposit lane: always active if the GlobalDeposit contract exists.
  */
@@ -31,7 +30,6 @@ export function useLaneStatus(): UseLaneStatusReturn {
   const { eth: ethChainId, rise: riseChainId } = NETWORK_CHAIN_IDS[network];
   const globalWithdrawAddr = getGlobalWithdrawAddress(riseChainId);
   const globalDepositAddr = getGlobalDepositAddress(ethChainId);
-  const usdcOnRise = getTokenAddress("USDC", riseChainId);
 
   // --- Withdrawal lanes: get registered dstEids ---
   const { data: rawLanes, isLoading: isLanesLoading } = useReadContract({
@@ -48,7 +46,7 @@ export function useLaneStatus(): UseLaneStatusReturn {
 
   const dstEids = (rawLanes as number[] | undefined) ?? [];
 
-  // --- Batch: isLanePaused + getRateLimitBucket for each lane ---
+  // --- Batch: isLanePaused + getLaneRateLimitBucket for each lane ---
   const batchContracts = useMemo(() => {
     if (!globalWithdrawAddr || dstEids.length === 0) return [];
     return dstEids.flatMap((eid) => [
@@ -62,12 +60,12 @@ export function useLaneStatus(): UseLaneStatusReturn {
       {
         address: globalWithdrawAddr,
         abi: riseGlobalWithdrawAbi,
-        functionName: "getRateLimitBucket" as const,
-        args: [usdcOnRise!, eid] as const,
+        functionName: "getLaneRateLimitBucket" as const,
+        args: [eid] as const,
         chainId: riseChainId,
       },
     ]);
-  }, [globalWithdrawAddr, dstEids, usdcOnRise, riseChainId]);
+  }, [globalWithdrawAddr, dstEids, riseChainId]);
 
   const { data: batchData, isLoading: isBatchLoading } = useReadContracts({
     contracts: batchContracts,
@@ -109,12 +107,16 @@ export function useLaneStatus(): UseLaneStatusReturn {
           available: bigint;
           capacity: bigint;
           refillPerBlock: bigint;
+          enabled: boolean;
         };
-        rateLimit = {
-          available: Number(formatUnits(bucket.available, 6)),
-          capacity: Number(formatUnits(bucket.capacity, 6)),
-          symbol: "USDC",
-        };
+        if (bucket.enabled) {
+          // OFT lane limits are USD-denominated with 18 decimals.
+          rateLimit = {
+            available: Number(formatUnits(bucket.available, 18)),
+            capacity: Number(formatUnits(bucket.capacity, 18)),
+            symbol: "USD",
+          };
+        }
       }
 
       result.push({
