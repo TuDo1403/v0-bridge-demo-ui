@@ -1,8 +1,24 @@
 import { create } from "zustand";
-import type { BridgeSession, BridgeStatus } from "./types";
+import type { BridgeKind, BridgeSession, BridgeStatus } from "./types";
 import { BRIDGE_ROUTES_BY_NETWORK } from "@/config/chains";
-import { getBridgeDirection, type BridgeDirection, type BridgeMode, type TransferMode } from "@/config/contracts";
+import { CONTRACTS, getBridgeDirection, type BridgeDirection, type BridgeMode, type TransferMode } from "@/config/contracts";
 import { type NetworkId, useNetworkStore } from "@/lib/network-store";
+
+/** Returns true when both source and dest chains have OP Stack contracts
+ *  configured (portal on the L1 side, message passer on the L2 side), so the
+ *  native bridge UI can be enabled for the current route. */
+export function isNativeBridgeAvailable(sourceChainId: number, destChainId: number): boolean {
+  const src = CONTRACTS[sourceChainId];
+  const dst = CONTRACTS[destChainId];
+  if (!src || !dst) return false;
+  // Either the source has the L1 portal and dest has the L2 predeploy
+  // (deposit direction) or vice versa (withdraw direction).
+  const srcHasL1 = !!src.optimismPortal;
+  const dstHasL2 = !!dst.l2ToL1MessagePasser;
+  const srcHasL2 = !!src.l2ToL1MessagePasser;
+  const dstHasL1 = !!dst.optimismPortal;
+  return (srcHasL1 && dstHasL2) || (srcHasL2 && dstHasL1);
+}
 
 /** Read the persisted network to determine initial defaults */
 function getInitialNetwork(): NetworkId {
@@ -69,6 +85,8 @@ interface BridgeStore {
   bridgeMode: BridgeMode;
   /** How tokens move: vault (ERC20 transfer) or permit2 (signature) */
   transferMode: TransferMode;
+  /** Bridge implementation: "lz" (LayerZero OFT) or "native" (OP Stack portal). */
+  bridgeKind: BridgeKind;
 
   // Active session
   activeSession: BridgeSession | null;
@@ -86,6 +104,7 @@ interface BridgeStore {
   setRecipientAddress: (addr: string) => void;
   setBridgeMode: (mode: BridgeMode) => void;
   setTransferMode: (mode: TransferMode) => void;
+  setBridgeKind: (kind: BridgeKind) => void;
 
   /** Swap source and destination chains */
   swapDirection: () => void;
@@ -118,6 +137,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   recipientAddress: "",
   bridgeMode: "operator",
   transferMode: "vault",
+  bridgeKind: "lz",
 
   activeSession: null,
   sessionSelectedAt: 0,
@@ -132,6 +152,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   setRecipientAddress: (addr) => set({ recipientAddress: addr, depositAddress: "" }),
   setBridgeMode: (mode) => set({ bridgeMode: mode }),
   setTransferMode: (mode) => set({ transferMode: mode }),
+  setBridgeKind: (kind) => set({ bridgeKind: kind }),
 
   swapDirection: () => {
     const { sourceChainId, destChainId } = get();

@@ -153,6 +153,129 @@ export function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "error" || status === "failed" || status === "roundtrip_completed";
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// OP Stack native bridge endpoints
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Shape returned by the BE for a native bridge job. Matches repo.NativeJobView. */
+export interface NativeJobView {
+  jobId: string;
+  bridgeKind: string;
+  direction: "deposit" | "withdraw";
+  status: string;
+  nativePhase: string;
+  srcEid: number;
+  dstEid: number;
+  sender: string;
+  receiver: string;
+  amount: string;
+  createdAt: string;
+  updatedAt: string;
+  withdrawal?: {
+    withdrawalHash: string;
+    nonce: string;
+    l2Sender: string;
+    target: string;
+    value: string;
+    gasLimit: string;
+    l2BlockNumber: number;
+    l2TxHash: string;
+    disputeGameAddr?: string;
+    disputeGameIndex?: number;
+    proveTxHash?: string;
+    provenAt?: string;
+    proofSubmitter?: string;
+    finalizeTxHash?: string;
+    finalizedAt?: string;
+    targetSimulationRevert?: string;
+  };
+  deposit?: {
+    l1TxHash: string;
+    l1BlockNumber: number;
+    fromAddr: string;
+    toAddr: string;
+    value: string;
+    l2TxHash?: string;
+    l2FinalizedAt?: string;
+  };
+}
+
+/** Submit a native bridge tx for tracking. The user has just signed the L1
+ *  deposit (or L2 withdraw-init) tx via wagmi; this returns a stable jobId
+ *  the FE can poll via pollNativeStatus immediately — without first waiting
+ *  for the indexer to ingest the on-chain event. Mirrors submitVaultFunded
+ *  for the LZ flow. */
+export async function submitNativeProcess(
+  req: {
+    direction: "deposit" | "withdraw";
+    txHash: string;
+    srcEid: number;
+    dstEid: number;
+    sender: string;
+    /** Destination-chain recipient. For self-bridges, omit (defaults to sender).
+     *  For send-to-other (custom recipient via L1StandardBridge.bridgeETHTo /
+     *  L2StandardBridge.withdrawTo / OptimismPortal2.depositTransaction(_to)),
+     *  pass the user-chosen address — the BE preserves it on placeholder
+     *  hydration so the UI shows the correct recipient even when the on-chain
+     *  protocol target is the bridge contract. */
+    receiver?: string;
+  },
+  network: "mainnet" | "testnet" = "mainnet",
+): Promise<{ jobId: string; status: string; nativePhase: string; created: boolean }> {
+  const res = await fetch(`${API_BASE}/native-process?net=${network}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) await throwApiError(res, "Native process submit failed");
+  return res.json();
+}
+
+/** Poll a native bridge job by ID. Throws on transport / non-404 server errors;
+ *  returns null when the job is not (yet) indexed. */
+export async function pollNativeStatus(
+  jobId: string,
+  network: "mainnet" | "testnet" = "mainnet"
+): Promise<NativeJobView | null> {
+  const res = await fetch(
+    `${API_BASE}/native-status?jobId=${encodeURIComponent(jobId)}&net=${network}`
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) await throwApiError(res, "Native status poll failed");
+  return res.json();
+}
+
+/** Look up a native bridge job by any associated tx hash (L1 deposit, L2 init,
+ *  prove, or finalize). Used by the UI immediately after wallet submission to
+ *  start polling before the indexer has caught up. */
+export async function lookupNativeByTxHash(
+  txHash: string,
+  network: "mainnet" | "testnet" = "mainnet"
+): Promise<NativeJobView | null> {
+  const res = await fetch(
+    `${API_BASE}/native-status-tx?txHash=${encodeURIComponent(txHash)}&net=${network}`
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) await throwApiError(res, "Native lookup failed");
+  return res.json();
+}
+
+/** Fetch native bridge history for an address (deposits + withdrawals). */
+export async function fetchNativeHistory(
+  address: string,
+  limit = 50,
+  network: "mainnet" | "testnet" = "mainnet"
+): Promise<{ items: NativeJobView[]; count: number }> {
+  const params = new URLSearchParams({
+    address,
+    limit: String(limit),
+    net: network,
+  });
+  const res = await fetch(`${API_BASE}/native-history?${params.toString()}`);
+  if (!res.ok) await throwApiError(res, "Native history fetch failed");
+  return res.json();
+}
+
 /** Response from the vault status endpoint. */
 export interface VaultStatusResponse {
   status: string;       // waiting | pending | claimed | submitted | completed | failed

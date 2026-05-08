@@ -186,6 +186,9 @@ export interface LzTrackingSnapshot {
   lzUpdated?: number;
 }
 
+/** Bridge implementation: LayerZero OFT or OP Stack native (portal + lockbox). */
+export type BridgeKind = "lz" | "native";
+
 export interface BridgeSession {
   id: string;
   createdAt: number;
@@ -202,6 +205,10 @@ export interface BridgeSession {
   network?: "mainnet" | "testnet";
   /** Bridge direction: deposit (Home→Remote) or withdraw (Remote→Home) */
   direction?: "deposit" | "withdraw";
+  /** Bridge kind. Defaults to "lz" for backward compatibility with persisted sessions. */
+  bridgeKind?: BridgeKind;
+  /** Native bridge phase (only set when bridgeKind === "native"). See lib/native-phases.ts. */
+  nativePhase?: string;
   /** Dapp ID for compose routing (0 = direct bridge, deposit-only) */
   dappId?: number;
   /** Bridge mode: operator-sponsored or self-bridge */
