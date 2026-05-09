@@ -1538,8 +1538,13 @@ export function BridgePanel() {
   // --- Render ---
   return (
     <div className="flex flex-col gap-4">
-      {/* Status rail - visible when session has progressed past idle (not on form step) */}
+      {/* Status rail - visible when session has progressed past idle (not on form step).
+          Hidden for native (OP Stack) sessions: the LZ stage list (Awaiting Transfer →
+          ... → LZ Indexing → LZ Pending → Destination Confirmed) is meaningless for
+          the native flow, which has its own phase machine surfaced by the
+          NativePhaseTimeline inside TrackingCard. */}
       {step !== "form" && activeSession &&
+        activeSession.bridgeKind !== "native" &&
         (activeSession.status !== "idle" || activeSession.jobId || activeSession.error) &&
         activeSession.status !== "awaiting_transfer" && (
         <div className="p-3 rounded-lg border border-border bg-card">

@@ -186,6 +186,80 @@ function phaseIcon(phase: TrackingPhase) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Native (OP Stack) header derivation                                */
+/* ------------------------------------------------------------------ */
+
+/** Header { label, color, icon, isTerminal } for an OP Stack native session,
+ *  driven by session.nativePhase. The LZ derivePhase() above is purely
+ *  LayerZero-flow specific (vault funding, LZ relay, compose) and produces
+ *  misleading copy on native sessions; this is the parallel mapping. */
+function deriveNativeHeader(session: BridgeSession): {
+  label: string;
+  color: string;
+  icon: React.ReactNode;
+  isTerminal: boolean;
+} {
+  const phase = session.nativePhase ?? "";
+  const direction = session.direction ?? "deposit";
+
+  // Terminal failures
+  if (phase === "failed" || session.status === "failed" || session.status === "error") {
+    return {
+      label: "Failed",
+      color: "text-destructive-foreground",
+      icon: <XCircle className="h-4 w-4" />,
+      isTerminal: true,
+    };
+  }
+
+  // Terminal success — phase wins over status because the BE flips both
+  // together but the FE polls them independently.
+  if (phase === "l2_credited" || phase === "finalized") {
+    return {
+      label: direction === "withdraw" ? "Withdrawal Complete" : "Bridge Complete",
+      color: "text-success",
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      isTerminal: true,
+    };
+  }
+
+  // In-flight phases — pick label, color, and icon by position in the
+  // native phase machine.
+  switch (phase) {
+    case "pending_l1_init":
+      return { label: "Submitting on L1", color: "text-muted-foreground", icon: <Clock className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "pending_l2_init":
+      return { label: "Submitting on L2", color: "text-muted-foreground", icon: <Clock className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "l1_confirmed":
+      return { label: "Awaiting L2 Credit", color: "text-primary", icon: <Radio className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "awaiting_game":
+      return { label: "Awaiting Dispute Game", color: "text-chart-4", icon: <Clock className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "ready_to_prove":
+      return { label: "Ready to Prove", color: "text-primary", icon: <Clock className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "proving":
+      return { label: "Proving Withdrawal", color: "text-primary", icon: <Layers className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "proven":
+    case "awaiting_finalization":
+      return { label: "Awaiting Proof Maturity", color: "text-chart-4", icon: <Clock className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "ready_to_finalize":
+      return { label: "Ready to Finalize", color: "text-primary", icon: <Clock className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "finalizing":
+      return { label: "Finalizing Withdrawal", color: "text-primary", icon: <Layers className="h-4 w-4 animate-pulse" />, isTerminal: false };
+    case "game_invalidated":
+      return { label: "Game Invalidated, Re-proving", color: "text-chart-4", icon: <AlertTriangle className="h-4 w-4" />, isTerminal: false };
+  }
+
+  // Unknown / not-yet-set phase — newly-submitted session before BE polls
+  // back the first phase.
+  return {
+    label: "Submitting Bridge",
+    color: "text-muted-foreground",
+    icon: <Clock className="h-4 w-4 animate-pulse" />,
+    isTerminal: false,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Elapsed timer                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -317,17 +391,28 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
   const network = useNetworkStore((s) => s.network);
   const LZ_SCAN_BASE = getLzScanBase(network);
   const phase = derivePhase(session);
-  const [expanded, setExpanded] = useState(phase === "failed");
   // OP Stack native bridge sessions: hide every LZ-specific UI block (LZ
   // Scan link, LZ Msg / Dest Tx rows, "LayerZero is still indexing" banner,
   // compose section, roundtrip return-leg). The phase progress bar is
   // already swapped for <NativePhaseTimeline> below; everything else just
   // doesn't apply.
   const isNative = session.bridgeKind === "native";
+  // Native sessions get their own header derived from session.nativePhase —
+  // derivePhase() is LZ-only and produces misleading copy ("Confirming on
+  // Source", "LZ Indexing") on native rows.
+  const nativeHeader = isNative ? deriveNativeHeader(session) : null;
+  const headerLabel = nativeHeader?.label ?? phaseLabel(phase);
+  const headerColor = nativeHeader?.color ?? phaseColor(phase);
+  const headerIcon = nativeHeader?.icon ?? phaseIcon(phase);
+  const isHeaderTerminal = nativeHeader?.isTerminal ?? false;
+  const [expanded, setExpanded] = useState(phase === "failed" || (isNative && nativeHeader?.label === "Failed"));
 
-  // Block confirmation tracking for "indexing" / "waiting" phases
+  // Block confirmation tracking for "indexing" / "waiting" phases. Native
+  // sessions skip this — OP Stack derivation deposits at `safe` head
+  // (~30s on Sepolia), well before LZ-style 15-confirmation thresholds, so
+  // an N/15 counter is misleading.
   const bridgeTxHash = session.selfBridgeTxHash || session.backendProcessTxHash;
-  const showConfirmations = (phase === "indexing" || phase === "waiting" || phase === "inflight") && !!bridgeTxHash;
+  const showConfirmations = !isNative && (phase === "indexing" || phase === "waiting" || phase === "inflight") && !!bridgeTxHash;
   const confirmations = useBlockConfirmations(
     showConfirmations ? session.sourceChainId : undefined,
     showConfirmations ? bridgeTxHash : undefined,
@@ -347,33 +432,40 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
       : PHASE_STEPS_DIRECT;
 
   // Pulse effect for active tracking
+  // Native terminal success/failure drives the border color too.
+  const isNativeSuccess = isNative && nativeHeader?.isTerminal && headerColor === "text-success";
+  const isNativeFailed = isNative && nativeHeader?.isTerminal && headerColor === "text-destructive-foreground";
   const borderClass = cn(
     "rounded-lg border transition-all duration-500",
-    phase === "complete" && "border-success/40 bg-success/5",
-    phase === "recovered" && "border-chart-4/40 bg-chart-4/5",
-    phase === "failed" && "border-destructive/40 bg-destructive/5",
-    !isTerminal && "border-primary/30 bg-primary/5",
+    !isNative && phase === "complete" && "border-success/40 bg-success/5",
+    !isNative && phase === "recovered" && "border-chart-4/40 bg-chart-4/5",
+    !isNative && phase === "failed" && "border-destructive/40 bg-destructive/5",
+    !isNative && !isTerminal && "border-primary/30 bg-primary/5",
+    isNativeSuccess && "border-success/40 bg-success/5",
+    isNativeFailed && "border-destructive/40 bg-destructive/5",
+    isNative && !isHeaderTerminal && "border-primary/30 bg-primary/5",
   );
+  const headerActive = isNative ? !isHeaderTerminal : !isTerminal;
 
   return (
     <div className={borderClass}>
       {/* Header strip */}
       <div className="px-4 py-3 flex items-center gap-3">
-        <div className={cn("shrink-0", phaseColor(phase))}>
-          {phaseIcon(phase)}
+        <div className={cn("shrink-0", headerColor)}>
+          {headerIcon}
         </div>
 
         <div className="flex flex-col gap-0.5 min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={cn("text-sm font-mono font-medium", phaseColor(phase))}>
-              {phaseLabel(phase)}
+            <span className={cn("text-sm font-mono font-medium", headerColor)}>
+              {headerLabel}
               {showConfirmations && confirmations.required > 0 && !confirmations.isLoading && (
                 <span className="text-xs text-muted-foreground font-normal ml-1.5">
                   ({confirmations.current}/{confirmations.required})
                 </span>
               )}
             </span>
-            {!isTerminal && <ElapsedTimer since={session.createdAt} />}
+            {headerActive && <ElapsedTimer since={session.createdAt} />}
           </div>
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
             <ChainIcon chainKey={sourceChain?.iconKey} className="h-3 w-3 shrink-0" />
