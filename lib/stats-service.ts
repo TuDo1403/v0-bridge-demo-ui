@@ -100,6 +100,12 @@ export interface JobFeedItem {
   lzGuid: string | null;
   lzDstTxHash: string | null;
   fee: string | null;
+  // Native correlated fields. Populated only when bridgeKind = "native_optimism".
+  nativeDepositL1TxHash: string | null;
+  nativeDepositL2TxHash: string | null;
+  nativeWithdrawL2TxHash: string | null;
+  nativeWithdrawProveTxHash: string | null;
+  nativeWithdrawFinalizeTxHash: string | null;
 }
 
 export interface JobFeedResponse {

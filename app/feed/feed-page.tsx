@@ -791,15 +791,28 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
         )}
       </div>
 
-      {/* Home chain bridge — LZ-only column. Native rows skip this since the
-       *  user's L1/L2 init tx is recorded in vault_fund_tx_hash (not yet
-       *  surfaced by the feed query) and there is no relayer bridge tx. */}
+      {/* Source panel — chain = srcEid. Native deposit shows the user's L1
+          bridgeETHTo tx; native withdrawal shows the user's L2 init tx. */}
       {isNative ? (
         <div className="space-y-1.5">
           <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
             {srcMeta?.label ?? `EID ${item.srcEid}`} (source)
           </p>
-          <span className="text-muted-foreground/80">Direct on-chain bridge — no relayer</span>
+          {(() => {
+            const txHash = item.direction === "deposit"
+              ? item.nativeDepositL1TxHash
+              : item.nativeWithdrawL2TxHash;
+            if (!txHash) return <span className="text-muted-foreground">Awaiting source tx</span>;
+            return (
+              <DetailRow
+                label="Bridge TX"
+                value={shortHash(txHash)}
+                copyable
+                fullValue={txHash}
+                icon={srcMeta ? { href: srcMeta.explorerTxUrl(txHash), chainKey: srcMeta.iconKey, label: `View on ${srcMeta.label}` } : undefined}
+              />
+            );
+          })()}
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -820,8 +833,9 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
         </div>
       )}
 
-      {/* Destination panel — kind-specific. LZ row shows the LZ Scan/GUID/Dst
-       *  TX block; native row shows the OP Stack phase timeline. */}
+      {/* Destination panel — chain = dstEid. Native deposit shows the OP Stack
+          system tx that emitted ETHBridgeFinalized; native withdrawal shows
+          prove + finalize on L1. */}
       {isNative ? (
         <div className="space-y-1.5">
           <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
@@ -838,6 +852,44 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
                 phase={item.nativePhase}
               />
             </div>
+          )}
+          {item.direction === "deposit" ? (
+            item.nativeDepositL2TxHash ? (
+              <DetailRow
+                label="Dst TX"
+                value={shortHash(item.nativeDepositL2TxHash)}
+                copyable
+                fullValue={item.nativeDepositL2TxHash}
+                icon={dstMeta ? { href: dstMeta.explorerTxUrl(item.nativeDepositL2TxHash), chainKey: dstMeta.iconKey, label: `View on ${dstMeta.label}` } : undefined}
+              />
+            ) : (
+              <span className="text-muted-foreground/60">Awaiting L2 credit</span>
+            )
+          ) : (
+            <>
+              {item.nativeWithdrawProveTxHash ? (
+                <DetailRow
+                  label="Prove TX"
+                  value={shortHash(item.nativeWithdrawProveTxHash)}
+                  copyable
+                  fullValue={item.nativeWithdrawProveTxHash}
+                  icon={dstMeta ? { href: dstMeta.explorerTxUrl(item.nativeWithdrawProveTxHash), chainKey: dstMeta.iconKey, label: `View on ${dstMeta.label}` } : undefined}
+                />
+              ) : (
+                <span className="text-muted-foreground/60">Awaiting prove</span>
+              )}
+              {item.nativeWithdrawFinalizeTxHash ? (
+                <DetailRow
+                  label="Finalize TX"
+                  value={shortHash(item.nativeWithdrawFinalizeTxHash)}
+                  copyable
+                  fullValue={item.nativeWithdrawFinalizeTxHash}
+                  icon={dstMeta ? { href: dstMeta.explorerTxUrl(item.nativeWithdrawFinalizeTxHash), chainKey: dstMeta.iconKey, label: `View on ${dstMeta.label}` } : undefined}
+                />
+              ) : (
+                <span className="text-muted-foreground/60">Awaiting finalize</span>
+              )}
+            </>
           )}
         </div>
       ) : (
