@@ -154,6 +154,8 @@ export interface BridgeStatusResponse {
   srcEid: number;
   dstEid: number;
   dappId: number;
+  bridgeKind?: BridgeKind;
+  nativePhase?: string;
   error: string | null;
   createdAt: string;
   updatedAt: string;
