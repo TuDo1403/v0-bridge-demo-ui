@@ -90,6 +90,10 @@ export interface JobFeedItem {
   bridgeTxHash: string | null;
   createdAt: string;
   updatedAt: string;
+  /** "layerzero" (default) or "native_optimism". */
+  bridgeKind: string;
+  /** OP Stack phase machine state, non-null only when bridgeKind = native_optimism. */
+  nativePhase: string | null;
   // correlated bridge fields (null when no bridge record exists yet)
   confirmedAt: string | null;  // non-null = source chain finalized the TX
   lzStatus: string | null;

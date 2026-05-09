@@ -8,6 +8,7 @@ import {
   useWaitForTransactionReceipt,
   useSwitchChain,
   usePublicClient,
+  useBalance,
 } from "wagmi";
 import {
   parseUnits,
@@ -25,6 +26,9 @@ import { useEIP2612 } from "@/hooks/use-eip2612";
 import { useComposeMsg } from "@/hooks/use-compose-msg";
 import { DappSelector } from "./dapp-selector";
 import { BridgeModeToggle } from "./bridge-mode-toggle";
+import { NativeBridgeAction } from "./native-bridge-action";
+import { isNativeBridgeAvailable } from "@/lib/bridge-store";
+import { isNativeToken, ETH_TOKEN_KEY } from "@/config/contracts";
 import {
   TOKENS,
   SUPPORTED_TOKEN_KEYS,
@@ -47,6 +51,7 @@ import {
   pollLzScan,
   lookupByTxHash,
   isTerminalStatus,
+  pollNativeStatus,
 } from "@/lib/bridge-service";
 import { useNetworkStore } from "@/lib/network-store";
 import { CONTRACT_ERROR_MAP, mapBackendStatus, isComposeFailed, type BridgeStatus, type BridgeSession } from "@/lib/types";
@@ -96,6 +101,7 @@ export function BridgePanel() {
     recipientAddress,
     bridgeMode,
     transferMode,
+    bridgeKind,
     activeSession,
     setSourceChainId,
     setDestChainId,
@@ -106,12 +112,14 @@ export function BridgePanel() {
     setRecipientAddress,
     setBridgeMode,
     setTransferMode,
+    setBridgeKind,
     swapDirection,
     createSession,
     updateSession,
     setActiveSession,
     resetForm,
     loadRecentSessions,
+    recentSessions,
   } = useBridgeStore();
 
   // Derive step from session state — single source of truth
@@ -170,6 +178,55 @@ export function BridgePanel() {
   // Load recent sessions on mount
   useEffect(() => {
     loadRecentSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Rehydrate native bridge sessions from BE on mount. loadRecentSessions
+  // restores the persisted list but never selects an activeSession, so neither
+  // BridgePanel's LZ resume nor NativeBridgeAction's native resume fire on a
+  // fresh page load. Each non-terminal native session in the list is fetched
+  // once against /v1/bridge/native/status/{jobId} and merged back into the
+  // store; the row's last-known nativePhase + status get replaced by ground
+  // truth so the recent-sessions list and any later setActiveSession click
+  // start from the correct state.
+  useEffect(() => {
+    if (recentSessions.length === 0) return;
+    const targets = recentSessions.filter(
+      (s) =>
+        s.bridgeKind === "native" &&
+        s.jobId &&
+        s.nativePhase !== "finalized" &&
+        s.nativePhase !== "l2_credited" &&
+        s.nativePhase !== "failed",
+    );
+    if (targets.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const s of targets) {
+        if (cancelled) return;
+        try {
+          const view = await pollNativeStatus(s.jobId!, network);
+          if (cancelled || !view) continue;
+          updateSession(s.id, {
+            nativePhase: view.nativePhase,
+            status:
+              view.nativePhase === "finalized" || view.nativePhase === "l2_credited"
+                ? "completed"
+                : view.nativePhase === "failed"
+                  ? "failed"
+                  : s.status,
+          });
+        } catch {
+          // Transient — leave row alone, NativeBridgeAction will retry once
+          // the user makes the session active.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Run once per mount; the list itself is loaded synchronously by the
+    // effect above so the first render always sees the persisted set.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -250,15 +307,33 @@ export function BridgePanel() {
     () => getTokenOptions(bridgeConfig, srcEid, dstEid),
     [bridgeConfig, srcEid, dstEid]
   );
-  const availableTokenKeys = dynamicTokens.length > 0
-    ? dynamicTokens.map((t) => t.key)
-    : SUPPORTED_TOKEN_KEYS;
+  const availableTokenKeys = useMemo(() => {
+    const base = dynamicTokens.length > 0
+      ? dynamicTokens.map((t) => t.key)
+      : SUPPORTED_TOKEN_KEYS;
+    // ETH appears only on routes that have OP Stack native bridge contracts
+    // configured on both ends. Picking ETH implicitly switches the form to
+    // the native bridge flow — no separate kind toggle needed.
+    if (isNativeBridgeAvailable(sourceChainId, destChainId) && !base.includes(ETH_TOKEN_KEY)) {
+      return [...base, ETH_TOKEN_KEY];
+    }
+    return base.filter((k) => k !== ETH_TOKEN_KEY);
+  }, [dynamicTokens, sourceChainId, destChainId]);
+
   // Auto-select first available token if current tokenKey is not in the list
   useEffect(() => {
     if (availableTokenKeys.length > 0 && !availableTokenKeys.includes(tokenKey)) {
       setTokenKey(availableTokenKeys[0]);
     }
   }, [availableTokenKeys, tokenKey, setTokenKey]);
+
+  // Derive bridgeKind from the selected token. ETH = OP Stack native, every
+  // other token = LayerZero OFT. The token picker is the only UX surface —
+  // there is no separate kind toggle.
+  const isNative = isNativeToken(tokenKey);
+  useEffect(() => {
+    setBridgeKind(isNative ? "native" : "lz");
+  }, [isNative, setBridgeKind]);
 
   const tokenAddress = (
     resolveTokenAddress(bridgeConfig, tokenKey, srcEid) ??
@@ -269,20 +344,40 @@ export function BridgePanel() {
     : undefined);
 
   // --- Read user wallet token balance ---
+  // Two parallel readers: ERC20 balanceOf for token bridges, native useBalance
+  // for ETH. Each is gated by `enabled` so wagmi only fetches the relevant
+  // one. Pick the right value below.
   const { data: walletBalance, isLoading: isBalanceLoading } = useReadContract({
     address: tokenAddress,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
     chainId: sourceChainId,
-    query: { enabled: !!address && !!tokenAddress, refetchInterval: 8_000, retry: 3, retryDelay: 2000 },
+    query: {
+      enabled: !!address && !!tokenAddress && !isNative,
+      refetchInterval: 8_000,
+      retry: 3,
+      retryDelay: 2000,
+    },
+  });
+  const { data: nativeBalance, isLoading: isNativeBalanceLoading } = useBalance({
+    address,
+    chainId: sourceChainId,
+    query: {
+      enabled: !!address && isNative,
+      refetchInterval: 8_000,
+    },
   });
 
-  // walletBalance can be 0n which is falsy, so check explicitly for undefined/null
-  const formattedWalletBalance =
-    walletBalance !== undefined && walletBalance !== null && token
+  // Pick the right formatted balance based on the selected token. Keeping
+  // `formattedWalletBalance` as the call-site identifier so the rest of the
+  // panel (max button, validation, fee summary) is untouched by the ETH split.
+  const formattedWalletBalance = isNative
+    ? nativeBalance?.formatted ?? null
+    : walletBalance !== undefined && walletBalance !== null && token
       ? formatUnits(walletBalance, token.decimals)
       : null;
+  const isBalanceReadLoading = isNative ? isNativeBalanceLoading : isBalanceLoading;
 
   // --- Compute deposit address via backend API ---
   const destLzEid = CHAINS[destChainId]?.lzEid;
@@ -1535,7 +1630,7 @@ export function BridgePanel() {
                   Balance
                 </span>
                 <span className="text-xs font-mono text-foreground">
-                  {isBalanceLoading ? (
+                  {isBalanceReadLoading ? (
                     <span className="flex items-center gap-1.5 text-muted-foreground">
                       <Loader2 className="h-3 w-3 animate-spin" />
                       Loading...
@@ -1714,8 +1809,14 @@ export function BridgePanel() {
             </div>
           </div>
 
-          {/* Bridge Mode Toggle */}
-          {isConnected && (
+          {/* When ETH is selected, the form routes through the OP Stack
+              native bridge — replace the LZ submit / transfer-mode / dapp
+              subtree with NativeBridgeAction. The chain selectors, amount,
+              and recipient inputs above are reused from the shared store. */}
+          {isConnected && isNative && <NativeBridgeAction />}
+
+          {/* Bridge Mode Toggle (LZ-only — hidden when token = ETH) */}
+          {isConnected && !isNative && (
             <BridgeModeToggle
               bridgeMode={bridgeMode}
               onBridgeModeChange={setBridgeMode}
@@ -1831,8 +1932,8 @@ export function BridgePanel() {
             />
           )}
 
-          {/* DEBUG: LZ Quote + Compose diagnostics */}
-          {isConnected && amount && parseFloat(amount) > 0 && (
+          {/* DEBUG: LZ Quote + Compose diagnostics — LZ-only */}
+          {isConnected && !isNative && amount && parseFloat(amount) > 0 && (
             <details className="p-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5">
               <summary className="text-[10px] font-mono uppercase tracking-wider text-yellow-600 cursor-pointer">
                 Debug: LZ Quote
@@ -1868,8 +1969,11 @@ export function BridgePanel() {
             </details>
           )}
 
-          {/* Dapp selector (deposit-only) */}
-          {isDeposit && isConnected && (
+          {/* Dapp selector (deposit-only, LZ-only) — drives compose routing
+              on the destination chain (Direct Bridge / RISEx Perps / etc.).
+              Native ETH bridges have no compose layer; the user just receives
+              raw ETH at the recipient address. */}
+          {isDeposit && isConnected && !isNative && (
             <DappSelector
               sourceChainId={sourceChainId}
               tokenAddress={tokenAddress}
@@ -1878,8 +1982,12 @@ export function BridgePanel() {
             />
           )}
 
-          {/* Deposit address preview */}
-          {isConnected && (
+          {/* Deposit address preview — only relevant for the LayerZero
+              vault-funded flow (user transfers ERC20 to a CREATE2 vault that
+              the operator sweeps). The native bridge sends ETH directly to
+              L1StandardBridge.bridgeETHTo — no intermediate vault — so this
+              block is hidden when ETH is selected. */}
+          {isConnected && !isNative && (
             <div className="p-2.5 sm:p-3 rounded-lg border border-border bg-muted/20">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
@@ -1998,7 +2106,8 @@ export function BridgePanel() {
             renderErrorBanner(error || activeSession.error || "Bridge transaction failed.")
           }
 
-          {/* DEBUG */}
+          {/* DEBUG — LZ-only debug panel (permit2 / self-bridge state) */}
+          {!isNative && (
           <div className="text-[9px] text-yellow-400 p-1 bg-black/50 rounded font-mono">
             signing:{String(permit2.isSigning)} | submitting:{String(isPermitSubmitting)} |
             needsApproval:{String(permit2.needsApproval)} | approvedOk:{String(permit2.isApprovalConfirmed)} |
@@ -2006,7 +2115,10 @@ export function BridgePanel() {
             selfBridgePending:{String(isSelfBridgePending)} | waitingSelf:{String(isWaitingSelfBridge)} |
             step:{step} | fee:{onChainProtocolFee?.toString() ?? "undef"}
           </div>
-          {/* Submit button */}
+          )}
+          {/* LZ Submit button — hidden when token = ETH; the OP Stack native
+              flow renders its own action button via NativeBridgeAction above. */}
+          {!isNative && (
           <Button
             onClick={() => { console.log("[BTN CLICKED]"); handleInitiateBridge(); }}
             disabled={(() => {
@@ -2105,6 +2217,7 @@ export function BridgePanel() {
               </>
             )}
           </Button>
+          )}
         </div>
       )}
 
@@ -2116,9 +2229,15 @@ export function BridgePanel() {
             <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground/50">
               <span>Session: {activeSession.id}</span>
               <span>|</span>
-              <span>Mode: {activeSession.bridgeMode}/{activeSession.transferMode}</span>
-              <span>|</span>
-              <span>Dapp: {activeSession.dappId ?? 0}</span>
+              {activeSession.bridgeKind === "native" ? (
+                <span>Kind: OP Stack Native</span>
+              ) : (
+                <>
+                  <span>Mode: {activeSession.bridgeMode}/{activeSession.transferMode}</span>
+                  <span>|</span>
+                  <span>Dapp: {activeSession.dappId ?? 0}</span>
+                </>
+              )}
             </div>
           )}
           <div className={cn(
@@ -2342,13 +2461,20 @@ export function BridgePanel() {
       {/* --- SESSION TRACKING VIEW --- */}
       {(step === "polling" || step === "complete") && activeSession && (
         <div className="flex flex-col gap-4">
-          {/* Session ID */}
+          {/* Session ID — Mode/Dapp are LZ-flow concepts; native sessions
+              show the bridge kind instead so the header reads coherently. */}
           <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground/50">
             <span>Session: {activeSession.id}</span>
             <span>|</span>
-            <span>Mode: {activeSession.bridgeMode}/{activeSession.transferMode}</span>
-            <span>|</span>
-            <span>Dapp: {activeSession.dappId ?? 0}</span>
+            {activeSession.bridgeKind === "native" ? (
+              <span>Kind: OP Stack Native</span>
+            ) : (
+              <>
+                <span>Mode: {activeSession.bridgeMode}/{activeSession.transferMode}</span>
+                <span>|</span>
+                <span>Dapp: {activeSession.dappId ?? 0}</span>
+              </>
+            )}
           </div>
           <TrackingCard session={activeSession} />
 

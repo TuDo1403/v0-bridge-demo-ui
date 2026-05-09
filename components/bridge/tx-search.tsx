@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { normalizeLzStatus, type LzTrackingData } from "@/lib/layerzero";
 import { CHAINS, getLzScanBase } from "@/config/chains";
 import { useNetworkStore } from "@/lib/network-store";
-import { lookupByTxHash } from "@/lib/bridge-service";
+import { lookupByTxHash, lookupNativeByTxHash } from "@/lib/bridge-service";
 import type { TxHashPair } from "@/lib/types";
 import {
   Search,
@@ -519,10 +519,34 @@ export function TxSearch({
     const trimmed = query.trim();
     const isHexHash = /^0x[0-9a-fA-F]{64}$/.test(trimmed);
 
-    // Step 1: Query our backend for tx hash pair
+    // Step 1: Query our backend for tx hash pair. Try LZ first (most users
+    // are still on the LZ flow); fall back to the native bridge endpoint so
+    // a user pasting an OP Stack deposit/withdraw tx hash gets a hit too.
     let pair: TxHashPair | null = null;
     if (isHexHash) {
       pair = await lookupByTxHash(trimmed, network).catch(() => null);
+      if (!pair) {
+        const native = await lookupNativeByTxHash(trimmed, network).catch(() => null);
+        if (native) {
+          // Adapt the NativeJobView shape to the lightweight TxHashPair the
+          // existing UI consumes. The user can drill into the native
+          // session via /track/tx/{hash} which renders TrackingCard with
+          // bridgeKind === "native".
+          pair = {
+            vault_fund_tx_hash:
+              native.direction === "deposit"
+                ? native.deposit?.l1TxHash ?? null
+                : native.withdrawal?.l2TxHash ?? null,
+            bridge_tx_hash:
+              native.direction === "deposit"
+                ? native.deposit?.l1TxHash ?? trimmed
+                : native.withdrawal?.l2TxHash ?? trimmed,
+            job_id: native.jobId,
+            status: native.status,
+            bridge_kind: "native",
+          };
+        }
+      }
       if (pair) setTxPair(pair);
     }
 

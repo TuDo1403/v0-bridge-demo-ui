@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { PageShell } from "@/components/bridge/page-shell";
 import { ChainIcon } from "@/components/bridge/chain-icon";
+import { NativeKindBadge } from "@/components/bridge/native-kind-badge";
+import { NativePhaseTimeline } from "@/components/bridge/native-phase-timeline";
 import {
   fetchJobFeed,
   fetchJobById,
@@ -89,8 +91,34 @@ const LZ_TERMINAL_FAILURES = new Set([
   "UNRESOLVABLE_COMMAND", "MALFORMED_COMMAND",
 ]);
 
+/** True when this row represents an OP Stack native bridge job. Uses
+ *  bridgeKind when the BE populates it; falls back to token-address
+ *  detection (ETH = native gas = no ERC20 token = zero address) so feed
+ *  rendering stays correct even when running against an older BE binary
+ *  that doesn't yet return the field. */
+function isNativeRow(item: JobFeedItem): boolean {
+  if (item.bridgeKind === "native_optimism") return true;
+  if (item.bridgeKind && item.bridgeKind !== "") return false;
+  return item.token === "0x0000000000000000000000000000000000000000";
+}
+
 function deriveBridgeStatus(item: JobFeedItem): BridgeStatus {
-  if (item.status === "failed") return "failed";
+  if (item.status === "failed" || item.nativePhase === "failed") return "failed";
+
+  // Native bridge: derive from the OP Stack phase machine. The native
+  // flow has no LZ-style intermediate "delivered" state — finalized (or
+  // l2_credited for deposits) IS the terminal success state.
+  if (isNativeRow(item)) {
+    const np = item.nativePhase ?? "";
+    if (np === "finalized" || np === "l2_credited") return "finalized";
+    if (np === "proven" || np === "ready_to_finalize" || np === "finalizing")
+      return "unfinalized";
+    if (np === "" || np === "pending_l1_init" || np === "pending_l2_init")
+      return "pending";
+    return "unfinalized";
+  }
+
+  // LZ flow.
   const lzUp = (item.lzStatus ?? "").toUpperCase().replace(/^LZ_/, "");
   if (LZ_TERMINAL_FAILURES.has(lzUp)) return "failed";
   if (item.confirmedAt || lzUp === "DELIVERED") return "finalized";
@@ -650,6 +678,7 @@ function JobRow({
         </td>
 
         <td className="py-2 pr-3 whitespace-nowrap">
+          <NativeKindBadge kind={isNativeRow(item) ? "native" : "lz"} className="mr-1.5 align-middle" />
           <span className="text-foreground">{srcMeta?.shortLabel ?? item.srcEid}</span>
           <ArrowRight className="inline h-3 w-3 mx-1 text-muted-foreground" />
           <span className="text-foreground">{dstMeta?.shortLabel ?? item.dstEid}</span>
@@ -659,8 +688,16 @@ function JobRow({
           <CopyableAddress address={item.sender} />
         </td>
 
-        <td className="py-2 pr-3 text-right text-foreground tabular-nums hidden sm:table-cell">
-          ${formatUSDC(item.amount)}
+        <td className="py-2 pr-3 text-right text-foreground tabular-nums hidden sm:table-cell whitespace-nowrap">
+          {(() => {
+            const { display, symbol } = formatTokenAmount(item.amount, item.token);
+            return (
+              <>
+                {display}
+                <span className="text-muted-foreground/70 ml-1">{symbol}</span>
+              </>
+            );
+          })()}
         </td>
 
         <td className="py-2 pr-3">
@@ -725,6 +762,7 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
   const srcMeta = eidToChainMeta(item.srcEid);
   const dstMeta = eidToChainMeta(item.dstEid);
   const lzBase = getLzScanBase(network);
+  const isNative = isNativeRow(item);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-4 text-[11px] font-mono">
@@ -735,8 +773,14 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
         <DetailRow label="Sender"   value={item.sender}   copyable adaptive />
         <DetailRow label="Receiver" value={item.receiver} copyable adaptive />
         <DetailRow label="Token"    value={item.token}    copyable adaptive />
-        <DetailRow label="Amount"   value={`$${formatUSDC(item.amount)}`} />
-        {item.fee && <DetailRow label="Fee" value={`$${formatUSDC(item.fee)}`} />}
+        {(() => {
+          const a = formatTokenAmount(item.amount, item.token);
+          return <DetailRow label="Amount" value={`${a.display} ${a.symbol}`} />;
+        })()}
+        {item.fee && (() => {
+          const f = formatTokenAmount(item.fee, item.token);
+          return <DetailRow label="Fee" value={`${f.display} ${f.symbol}`} />;
+        })()}
         <DetailRow label="Retries"  value={String(item.retryCount)} />
         <DetailRow label="Created"  value={formatDateTime(item.createdAt)} />
         <DetailRow label="Updated"  value={formatDateTime(item.updatedAt)} />
@@ -747,60 +791,92 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
         )}
       </div>
 
-      {/* Home chain bridge */}
-      <div className="space-y-1.5">
-        <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
-          {srcMeta?.label ?? `EID ${item.srcEid}`} (source)
-        </p>
-        {item.bridgeTxHash ? (
-          <DetailRow
-            label="Bridge TX"
-            value={shortHash(item.bridgeTxHash)}
-            copyable
-            fullValue={item.bridgeTxHash}
-            icon={srcMeta ? { href: srcMeta.explorerTxUrl(item.bridgeTxHash), chainKey: srcMeta.iconKey, label: `View on ${srcMeta.label}` } : undefined}
-          />
-        ) : (
-          <span className="text-muted-foreground">Not yet submitted</span>
-        )}
-      </div>
+      {/* Home chain bridge — LZ-only column. Native rows skip this since the
+       *  user's L1/L2 init tx is recorded in vault_fund_tx_hash (not yet
+       *  surfaced by the feed query) and there is no relayer bridge tx. */}
+      {isNative ? (
+        <div className="space-y-1.5">
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
+            {srcMeta?.label ?? `EID ${item.srcEid}`} (source)
+          </p>
+          <span className="text-muted-foreground/80">Direct on-chain bridge — no relayer</span>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
+            {srcMeta?.label ?? `EID ${item.srcEid}`} (source)
+          </p>
+          {item.bridgeTxHash ? (
+            <DetailRow
+              label="Bridge TX"
+              value={shortHash(item.bridgeTxHash)}
+              copyable
+              fullValue={item.bridgeTxHash}
+              icon={srcMeta ? { href: srcMeta.explorerTxUrl(item.bridgeTxHash), chainKey: srcMeta.iconKey, label: `View on ${srcMeta.label}` } : undefined}
+            />
+          ) : (
+            <span className="text-muted-foreground">Not yet submitted</span>
+          )}
+        </div>
+      )}
 
-      {/* LZ delivery + remote chain */}
-      <div className="space-y-1.5">
-        <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
-          LZ → {dstMeta?.label ?? `EID ${item.dstEid}`}
-        </p>
-        {item.bridgeTxHash ? (
-          <>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Status</span>
-              <BridgeStatusBadge status={deriveBridgeStatus(item)} />
+      {/* Destination panel — kind-specific. LZ row shows the LZ Scan/GUID/Dst
+       *  TX block; native row shows the OP Stack phase timeline. */}
+      {isNative ? (
+        <div className="space-y-1.5">
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
+            OP Stack → {dstMeta?.label ?? `EID ${item.dstEid}`}
+          </p>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Status</span>
+            <BridgeStatusBadge status={deriveBridgeStatus(item)} />
+          </div>
+          {item.nativePhase && (
+            <div className="pt-1">
+              <NativePhaseTimeline
+                direction={item.direction === "deposit" ? "deposit" : "withdraw"}
+                phase={item.nativePhase}
+              />
             </div>
-            {item.lzGuid ? (
-              <DetailRow
-                label="GUID"
-                value={shortHash(item.lzGuid)}
-                copyable
-                fullValue={item.lzGuid}
-                icon={{ href: `${lzBase}/tx/${item.lzGuid}`, chainKey: "layerzero", label: "LayerZero Scan" }}
-              />
-            ) : (
-              <span className="text-muted-foreground/60">Awaiting LZ indexing</span>
-            )}
-            {item.lzDstTxHash && (
-              <DetailRow
-                label="Dst TX"
-                value={shortHash(item.lzDstTxHash)}
-                copyable
-                fullValue={item.lzDstTxHash}
-                icon={dstMeta ? { href: dstMeta.explorerTxUrl(item.lzDstTxHash), chainKey: dstMeta.iconKey, label: `View on ${dstMeta.label}` } : undefined}
-              />
-            )}
-          </>
-        ) : (
-          <span className="text-muted-foreground">Awaiting bridge TX</span>
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
+            LZ → {dstMeta?.label ?? `EID ${item.dstEid}`}
+          </p>
+          {item.bridgeTxHash ? (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Status</span>
+                <BridgeStatusBadge status={deriveBridgeStatus(item)} />
+              </div>
+              {item.lzGuid ? (
+                <DetailRow
+                  label="GUID"
+                  value={shortHash(item.lzGuid)}
+                  copyable
+                  fullValue={item.lzGuid}
+                  icon={{ href: `${lzBase}/tx/${item.lzGuid}`, chainKey: "layerzero", label: "LayerZero Scan" }}
+                />
+              ) : (
+                <span className="text-muted-foreground/60">Awaiting LZ indexing</span>
+              )}
+              {item.lzDstTxHash && (
+                <DetailRow
+                  label="Dst TX"
+                  value={shortHash(item.lzDstTxHash)}
+                  copyable
+                  fullValue={item.lzDstTxHash}
+                  icon={dstMeta ? { href: dstMeta.explorerTxUrl(item.lzDstTxHash), chainKey: dstMeta.iconKey, label: `View on ${dstMeta.label}` } : undefined}
+                />
+              )}
+            </>
+          ) : (
+            <span className="text-muted-foreground">Awaiting bridge TX</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -956,6 +1032,33 @@ function formatUSDC(raw: string | null | undefined): string {
   if (!raw || raw === "0") return "0.00";
   const n = Number(raw) / 1e6;
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Format a token amount (raw integer string in smallest units) using
+ *  the right decimals for the token. ETH (zero address) → 18 decimals;
+ *  every other token assumed USDC (6 decimals) for now. Pads to 6 sig
+ *  figs for ETH so very small bridges (0.0001) read correctly. */
+function formatTokenAmount(raw: string | null | undefined, tokenAddr: string): {
+  display: string;
+  symbol: string;
+} {
+  if (!raw || raw === "0") return { display: "0", symbol: tokenAmountSymbol(tokenAddr) };
+  const isETH = tokenAddr === "0x0000000000000000000000000000000000000000";
+  const decimals = isETH ? 18 : 6;
+  // Number() loses precision past ~15 sig figs which is fine for display
+  // (largest bridge amount is well under 2^53 wei = ~9007 ETH).
+  const n = Number(raw) / 10 ** decimals;
+  return {
+    display: n.toLocaleString(undefined, {
+      minimumFractionDigits: isETH ? 4 : 2,
+      maximumFractionDigits: isETH ? 6 : 2,
+    }),
+    symbol: tokenAmountSymbol(tokenAddr),
+  };
+}
+
+function tokenAmountSymbol(tokenAddr: string): string {
+  return tokenAddr === "0x0000000000000000000000000000000000000000" ? "ETH" : "USDC";
 }
 
 function formatTimeAgo(iso: string): string {

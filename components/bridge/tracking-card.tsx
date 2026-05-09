@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { ChainIcon } from "./chain-icon";
 import { AddressPill } from "./address-pill";
 import { PhaseProgressBar } from "./phase-progress-bar";
+import { NativePhaseTimeline } from "./native-phase-timeline";
 import {
   ExternalLink,
   CheckCircle2,
@@ -317,6 +318,12 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
   const LZ_SCAN_BASE = getLzScanBase(network);
   const phase = derivePhase(session);
   const [expanded, setExpanded] = useState(phase === "failed");
+  // OP Stack native bridge sessions: hide every LZ-specific UI block (LZ
+  // Scan link, LZ Msg / Dest Tx rows, "LayerZero is still indexing" banner,
+  // compose section, roundtrip return-leg). The phase progress bar is
+  // already swapped for <NativePhaseTimeline> below; everything else just
+  // doesn't apply.
+  const isNative = session.bridgeKind === "native";
 
   // Block confirmation tracking for "indexing" / "waiting" phases
   const bridgeTxHash = session.selfBridgeTxHash || session.backendProcessTxHash;
@@ -393,8 +400,8 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
           </div>
         </div>
 
-        {/* LZ Scan link */}
-        {(session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash) && (
+        {/* LZ Scan link — LZ-only */}
+        {!isNative && (session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash) && (
           <a
             href={`${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash}`}
             target="_blank"
@@ -450,9 +457,17 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
         </div>
       )}
 
-      {/* Progress bar */}
+      {/* Progress bar — native bridge has its own multi-phase timeline driven
+          by the BE-managed phase machine; LZ uses the existing phaseSteps map. */}
       <div className="px-4 pb-3">
-        <PhaseProgressBar steps={phaseSteps} current={phase} labels={PHASE_LABELS} />
+        {session.bridgeKind === "native" ? (
+          <NativePhaseTimeline
+            direction={(session.direction ?? "deposit") as "deposit" | "withdraw"}
+            phase={session.nativePhase ?? "pending_l2_init"}
+          />
+        ) : (
+          <PhaseProgressBar steps={phaseSteps} current={phase} labels={PHASE_LABELS} />
+        )}
       </div>
 
       {/* Block confirmation progress */}
@@ -518,28 +533,32 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                   : undefined
               }
             />
-            <TxBadge
-              label="LZ Msg"
-              hash={lz?.guid ?? session.lzMessageId}
-              explorerUrl={
-                (session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash)
-                  ? `${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash}`
-                  : undefined
-              }
-            />
-            <TxBadge
-              label="Dest Tx"
-              hash={lz?.dstTxHash ?? session.destinationTxHash}
-              explorerUrl={
-                (lz?.dstTxHash ?? session.destinationTxHash)
-                  ? destChain?.explorerTxUrl(lz?.dstTxHash ?? session.destinationTxHash ?? "")
-                  : undefined
-              }
-            />
+            {!isNative && (
+              <>
+                <TxBadge
+                  label="LZ Msg"
+                  hash={lz?.guid ?? session.lzMessageId}
+                  explorerUrl={
+                    (session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash)
+                      ? `${LZ_SCAN_BASE}/tx/${session.lzTxHash || session.backendProcessTxHash || session.selfBridgeTxHash || lz?.srcTxHash}`
+                      : undefined
+                  }
+                />
+                <TxBadge
+                  label="Dest Tx"
+                  hash={lz?.dstTxHash ?? session.destinationTxHash}
+                  explorerUrl={
+                    (lz?.dstTxHash ?? session.destinationTxHash)
+                      ? destChain?.explorerTxUrl(lz?.dstTxHash ?? session.destinationTxHash ?? "")
+                      : undefined
+                  }
+                />
+              </>
+            )}
           </div>
 
-          {/* Compose info — only for compose sessions (dappId > 0) */}
-          {hasCompose(session) && lz?.composeStatus && lz.composeStatus !== "UNKNOWN" && (
+          {/* Compose info — LZ-only (compose layer doesn't exist on native) */}
+          {!isNative && hasCompose(session) && lz?.composeStatus && lz.composeStatus !== "UNKNOWN" && (
             <div className="flex flex-col gap-1.5">
               <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
                 Compose Execution
@@ -556,8 +575,8 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             </div>
           )}
 
-          {/* Return bridge info — roundtrip sessions */}
-          {isRoundTrip && session.returnLeg && (
+          {/* Return bridge info — roundtrip sessions (LZ-only) */}
+          {!isNative && isRoundTrip && session.returnLeg && (
             <div className="flex flex-col gap-1.5">
               <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
                 Return Bridge ({destChain?.shortLabel} → {sourceChain?.shortLabel})
@@ -620,7 +639,7 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                 <span className="text-[11px] font-mono text-muted-foreground italic">self</span>
               </div>
             )}
-            {session.depositAddress && (
+            {session.depositAddress && !isNative && (
               <div className="flex items-center gap-1.5 min-w-0">
                 <AddressPill label="Vault" address={session.depositAddress} />
                 <Link
@@ -632,15 +651,21 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                 </Link>
               </div>
             )}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">Dapp</span>
-              <span className="text-[11px] font-mono text-foreground">
-                {KNOWN_DAPPS.find((d) => d.dappId === (session.dappId ?? 0))?.label ?? `#${session.dappId ?? 0}`}
-              </span>
-            </div>
+            {/* Dapp / compose routing only exists on the LZ flow. */}
+            {!isNative && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">Dapp</span>
+                <span className="text-[11px] font-mono text-foreground">
+                  {KNOWN_DAPPS.find((d) => d.dappId === (session.dappId ?? 0))?.label ?? `#${session.dappId ?? 0}`}
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* EID info + addresses */}
+          {/* Source / destination chain info. Native bridge uses EVM chain
+              IDs natively; show the chain label instead of LZ EIDs and skip
+              the lz-tracking sender/receiver address pulls (those come from
+              LZ Scan, not from native indexing). */}
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
               <span className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
@@ -648,9 +673,11 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                 Source
               </span>
               <span className="text-[11px] font-mono text-foreground">
-                EID {lz?.srcEid ?? sourceChain?.lzEid ?? "--"}
+                {isNative
+                  ? sourceChain?.label ?? `Chain ${session.sourceChainId}`
+                  : `EID ${lz?.srcEid ?? sourceChain?.lzEid ?? "--"}`}
               </span>
-              <AddressPill label="Sender" address={lz?.sender} />
+              {!isNative && <AddressPill label="Sender" address={lz?.sender} />}
             </div>
             <div className="flex flex-col gap-1">
               <span className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
@@ -658,14 +685,16 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                 Destination
               </span>
               <span className="text-[11px] font-mono text-foreground">
-                EID {lz?.dstEid ?? destChain?.lzEid ?? "--"}
+                {isNative
+                  ? destChain?.label ?? `Chain ${session.destChainId}`
+                  : `EID ${lz?.dstEid ?? destChain?.lzEid ?? "--"}`}
               </span>
-              <AddressPill label="Receiver" address={lz?.receiver} />
+              {!isNative && <AddressPill label="Receiver" address={lz?.receiver} />}
             </div>
           </div>
 
-          {/* Raw LZ status */}
-          {lz?.rawStatus && (
+          {/* Raw LZ status — LZ-only */}
+          {!isNative && lz?.rawStatus && (
             <div className="flex items-center gap-2">
               <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
                 LZ Raw
@@ -681,8 +710,10 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             </div>
           )}
 
-          {/* Nudge / retry for stalled waiting phase */}
-          {phase === "waiting" && (Date.now() - session.createdAt > 120_000) && (
+          {/* Nudge / retry for stalled waiting phase — LZ-only. Native
+              bridge has its own multi-step phase machine and a 25-min
+              expected duration; the "1-3 minutes" copy doesn't apply. */}
+          {!isNative && phase === "waiting" && (Date.now() - session.createdAt > 120_000) && (
             <div className="flex flex-col gap-2">
               <div className="px-3 py-2 rounded bg-warning/10 border border-warning/20 text-[11px] font-mono text-warning flex items-start gap-2">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />

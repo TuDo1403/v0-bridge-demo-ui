@@ -121,6 +121,11 @@ export interface TxHashPair {
   bridge_tx_hash: string;
   job_id?: string;   // set when matched from job_requests
   status?: string;   // set when matched from job_requests
+  /** Bridge implementation kind. Optional for backward compat: legacy LZ
+   *  rows omit this field, in which case the UI falls back to "lz". Native
+   *  bridge rows set this to "native" so HistoryItemCard can show the right
+   *  badge alongside the route. */
+  bridge_kind?: BridgeKind;
 }
 
 /* -- Paginated history response -- */

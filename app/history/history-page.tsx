@@ -8,6 +8,7 @@ import { useAccount } from "wagmi";
 import { PageShell } from "@/components/bridge/page-shell";
 import { fetchHistory, pollLzScan } from "@/lib/bridge-service";
 import type { TxHashPair, HistoryResponse, LzTrackingSnapshot } from "@/lib/types";
+import { NativeKindBadge } from "@/components/bridge/native-kind-badge";
 import { CHAINS, getLzScanBase, eidToChainMeta } from "@/config/chains";
 import { useNetworkStore } from "@/lib/network-store";
 import { TxBadge } from "@/components/bridge/tx-badge";
@@ -113,6 +114,7 @@ function HistoryItemCard({
       {/* Top row: route + status */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
+          <NativeKindBadge kind={item.bridge_kind ?? "lz"} />
           <div className="flex items-center gap-1.5 text-xs font-mono">
             {srcChain ? (
               <>

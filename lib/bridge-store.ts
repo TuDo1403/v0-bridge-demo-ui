@@ -4,6 +4,23 @@ import { BRIDGE_ROUTES_BY_NETWORK } from "@/config/chains";
 import { CONTRACTS, getBridgeDirection, type BridgeDirection, type BridgeMode, type TransferMode } from "@/config/contracts";
 import { type NetworkId, useNetworkStore } from "@/lib/network-store";
 
+/** Submit-time snapshot of an in-flight native bridge tx, captured the
+ *  moment the user signs so the post-receipt registration step uses the
+ *  exact metadata the wallet just signed — even if the form is mutated or
+ *  the action component unmounts (e.g. user toggles token away from ETH)
+ *  before the receipt arrives. Cleared once the gateway hands back a jobId
+ *  and the session is created. */
+export interface PendingNativeTx {
+  hash: `0x${string}`;
+  direction: "deposit" | "withdraw";
+  sender: `0x${string}`;
+  receiver: `0x${string}`;
+  srcEid: number;
+  dstEid: number;
+  sourceChainId: number;
+  network: "mainnet" | "testnet";
+}
+
 /** Returns true when both source and dest chains have OP Stack contracts
  *  configured (portal on the L1 side, message passer on the L2 side), so the
  *  native bridge UI can be enabled for the current route. */
@@ -94,6 +111,11 @@ interface BridgeStore {
   sessionSelectedAt: number;
   recentSessions: BridgeSession[];
 
+  /** In-flight native bridge tx awaiting receipt + gateway registration. Set
+   *  at submit time, cleared after the gateway returns a jobId. Non-persisted
+   *  — survives in-app remounts (e.g. token toggle) but not full reloads. */
+  pendingNativeTx: PendingNativeTx | null;
+
   // Actions
   setSourceChainId: (id: number) => void;
   setDestChainId: (id: number) => void;
@@ -122,6 +144,10 @@ interface BridgeStore {
   // Remove session (for phantom/cancelled sessions)
   removeSession: (id: string) => void;
 
+  /** Native bridge: register the just-signed tx so registration survives
+   *  remounts of the action component. */
+  setPendingNativeTx: (tx: PendingNativeTx | null) => void;
+
   // Reset
   resetForm: () => void;
 }
@@ -142,6 +168,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
   activeSession: null,
   sessionSelectedAt: 0,
   recentSessions: [],
+  pendingNativeTx: null,
 
   setSourceChainId: (id) => set({ sourceChainId: id, direction: getBridgeDirection(id) }),
   setDestChainId: (id) => set({ destChainId: id }),
@@ -181,6 +208,7 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
       status: "awaiting_transfer" as BridgeStatus,
       network: useNetworkStore.getState().network,
       direction: state.direction,
+      bridgeKind: state.bridgeKind,
       dappId: state.dappId,
       bridgeMode: state.bridgeMode,
       transferMode: state.transferMode,
@@ -271,6 +299,8 @@ export const useBridgeStore = create<BridgeStore>((set, get) => ({
       activeSession: active?.id === id ? null : active,
     });
   },
+
+  setPendingNativeTx: (tx) => set({ pendingNativeTx: tx }),
 
   resetForm: () =>
     set({

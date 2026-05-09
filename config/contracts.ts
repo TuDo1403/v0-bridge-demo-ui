@@ -47,9 +47,34 @@ export const TOKENS: Record<string, TokenMeta> = {
       4153: "0xe436820ba0C69702c1d3E601d421c0eF38262739",
     },
   },
+  // Native ETH — addresses map intentionally empty: ETH is the chain's native
+  // gas token, not an ERC20. Routing logic uses the token KEY (=== "ETH") as
+  // the discriminator for picking the OP Stack native bridge flow over
+  // LayerZero. The token only appears in the picker on routes whose contracts
+  // entries populate optimismPortal + l2ToL1MessagePasser.
+  ETH: {
+    symbol: "ETH",
+    name: "Ether",
+    decimals: 18,
+    addresses: {},
+  },
 };
 
 export const SUPPORTED_TOKEN_KEYS = Object.keys(TOKENS);
+
+/** Pseudo-address used by the UI when serializing ETH transfers; the OP
+ *  Stack L2StandardBridge takes 0xdEAD…0000 as its `_l2Token` arg for ETH
+ *  withdrawals (mirrors lib/native-abi.ts). UIs that need a fallback
+ *  "address" string for ETH (history rows, status pills) should display
+ *  "ETH" rather than this pseudo-address. */
+export const ETH_TOKEN_KEY = "ETH";
+
+/** Returns true when this token key represents the chain's native ETH token
+ *  (and therefore should route through the OP Stack native bridge instead
+ *  of the LayerZero OFT path). */
+export function isNativeToken(tokenKey: string): boolean {
+  return tokenKey === ETH_TOKEN_KEY;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Contract addresses per chain                                       */

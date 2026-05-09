@@ -8,6 +8,7 @@ import { CHAINS } from "@/config/chains";
 import { TOKENS } from "@/config/contracts";
 import { cn } from "@/lib/utils";
 import { ChainIcon } from "./chain-icon";
+import { NativeKindBadge } from "./native-kind-badge";
 import { Button } from "@/components/ui/button";
 import {
   Clock,
@@ -118,6 +119,9 @@ function SessionRow({
         )}
 
         <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground min-w-0">
+          {session.bridgeKind === "native" && (
+            <NativeKindBadge kind="native" className="!py-0 !text-[8px] shrink-0" textOnly />
+          )}
           <ChainIcon chainKey={CHAINS[session.sourceChainId]?.iconKey} className="h-3 w-3 shrink-0" />
           <span>{sourceLabel}</span>
           <ArrowRight className="h-2.5 w-2.5 shrink-0" />
