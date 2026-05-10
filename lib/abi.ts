@@ -440,6 +440,48 @@ export const oftConversionRateAbi = [
   },
 ] as const;
 
+/** Minimal ABI for OFT directional rate-limit bucket queries */
+export const oftRateLimitAbi = [
+  {
+    type: "function",
+    name: "getOutboundRateLimitBucket",
+    inputs: [{ name: "dstEid", type: "uint32" }],
+    outputs: [
+      {
+        name: "bucket",
+        type: "tuple",
+        components: [
+          { name: "capacity", type: "uint128" },
+          { name: "refillPerBlock", type: "uint128" },
+          { name: "available", type: "uint128" },
+          { name: "lastBlock", type: "uint64" },
+          { name: "enabled", type: "bool" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getInboundRateLimitBucket",
+    inputs: [{ name: "srcEid", type: "uint32" }],
+    outputs: [
+      {
+        name: "bucket",
+        type: "tuple",
+        components: [
+          { name: "capacity", type: "uint128" },
+          { name: "refillPerBlock", type: "uint128" },
+          { name: "available", type: "uint128" },
+          { name: "lastBlock", type: "uint64" },
+          { name: "enabled", type: "bool" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+] as const;
+
 export const erc20Abi = [
   {
     type: "function",

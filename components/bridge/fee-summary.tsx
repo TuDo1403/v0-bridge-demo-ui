@@ -3,14 +3,20 @@
 import { cn } from "@/lib/utils";
 import { Sparkles } from "lucide-react";
 
+export interface RateLimitSummary {
+  label: string;
+  availableLabel?: string;
+  capacityLabel?: string;
+  enabled: boolean;
+  low?: boolean;
+}
+
 interface FeeSummaryProps {
   feeBps: number;
   feeExempt: boolean;
   amount: string;
   tokenSymbol: string;
   direction: "deposit" | "withdraw";
-  /** Rate limit remaining (formatted, e.g. "487/500 USDC") */
-  rateLimitLabel?: string;
   /** Whether this lane is paused */
   lanePaused?: boolean;
   /** 0 = Percentage, 1 = Flat (from on-chain getTokenFeeConfig) */
@@ -21,6 +27,8 @@ interface FeeSummaryProps {
   tokenDecimals: number;
   /** On-chain protocol fee from quote() — authoritative */
   protocolFee?: bigint;
+  /** Current route rate-limit buckets, already formatted in their native units */
+  rateLimits?: RateLimitSummary[];
 }
 
 export function FeeSummary({
@@ -29,12 +37,12 @@ export function FeeSummary({
   amount,
   tokenSymbol,
   direction,
-  rateLimitLabel,
   lanePaused,
   feeMode,
   flatFee,
   tokenDecimals,
   protocolFee,
+  rateLimits = [],
 }: FeeSummaryProps) {
   const parsedAmount = parseFloat(amount) || 0;
 
@@ -84,9 +92,28 @@ export function FeeSummary({
           }
         />
 
-        {/* Rate limit - only for withdrawals */}
-        {direction === "withdraw" && rateLimitLabel && (
-          <Row label="Rate Limit" value={rateLimitLabel} />
+        {rateLimits.length > 0 && (
+          <>
+            <div className="h-px bg-border my-0.5" />
+            <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/70">
+              Route Limits
+            </span>
+            {rateLimits.map((limit) => (
+              <Row
+                key={limit.label}
+                label={limit.label}
+                value={
+                  limit.enabled && limit.availableLabel && limit.capacityLabel ? (
+                    <span className={limit.low ? "text-warning" : undefined}>
+                      {limit.availableLabel} / {limit.capacityLabel}
+                    </span>
+                  ) : (
+                    "Not rate limited"
+                  )
+                }
+              />
+            ))}
+          </>
         )}
 
         {/* Lane paused warning */}

@@ -9,6 +9,7 @@ import {
   useSwitchChain,
   usePublicClient,
   useBalance,
+  useReadContracts,
 } from "wagmi";
 import {
   parseUnits,
@@ -16,7 +17,7 @@ import {
   type Address,
 } from "viem";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { riseGlobalDepositAbi, riseGlobalWithdrawAbi, erc20Abi, oftConversionRateAbi } from "@/lib/abi";
+import { riseGlobalDepositAbi, riseGlobalWithdrawAbi, erc20Abi, oftConversionRateAbi, oftRateLimitAbi } from "@/lib/abi";
 import { CHAINS, BRIDGE_ROUTES_BY_NETWORK, chainIdToEid } from "@/config/chains";
 import { useDepositAddress } from "@/hooks/use-deposit-address";
 import { useVaultStatus } from "@/hooks/use-vault-status";
@@ -42,6 +43,7 @@ import {
   useBridgeConfig,
   isDappRoundTrip,
   getTokenOptions,
+  findTokenById,
   resolveTokenAddress,
 } from "@/lib/bridge-config";
 import {
@@ -72,7 +74,7 @@ import { ChainIcon, TokenIcon } from "./chain-icon";
 import { StatusRail } from "./status-rail";
 import { TrackingCard } from "./tracking-card";
 import { TxBadge } from "./tx-badge";
-import { FeeSummary } from "./fee-summary";
+import { FeeSummary, type RateLimitSummary } from "./fee-summary";
 import { RecoveryPanel } from "./recovery-panel";
 import {
   ArrowDown,
@@ -85,6 +87,25 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+type RateLimitBucket = {
+  capacity: bigint;
+  refillPerBlock: bigint;
+  available: bigint;
+  lastBlock: bigint;
+  enabled: boolean;
+};
+
+function isEnabledBucket(bucket: unknown): bucket is RateLimitBucket {
+  return !!bucket && typeof bucket === "object" && "enabled" in bucket && (bucket as { enabled: boolean }).enabled;
+}
+
+function compactAmount(value: bigint, decimals: number, symbol: string): string {
+  const numeric = Number(formatUnits(value, decimals));
+  return `${numeric.toLocaleString(undefined, {
+    maximumFractionDigits: numeric >= 100 ? 0 : 2,
+  })} ${symbol}`;
+}
 
 async function waitForIndexedLzJob(
   txHash: string,
@@ -450,6 +471,10 @@ export function BridgePanel() {
     resolveTokenAddress(bridgeConfig, tokenKey, srcEid) ??
     getTokenAddressFallback(tokenKey, sourceChainId)
   ) as `0x${string}` | undefined;
+  const selectedDynamicToken = dynamicTokens.find((t) => t.key === tokenKey);
+  const routeToken = selectedDynamicToken ? findTokenById(bridgeConfig, selectedDynamicToken.id) : undefined;
+  const srcRouteToken = routeToken?.chains[String(srcEid)];
+  const dstRouteToken = routeToken?.chains[String(dstEid)];
   const token = TOKENS[tokenKey] ?? (dynamicTokens.find((t) => t.key === tokenKey)
     ? { symbol: dynamicTokens.find((t) => t.key === tokenKey)!.symbol, name: dynamicTokens.find((t) => t.key === tokenKey)!.name, decimals: dynamicTokens.find((t) => t.key === tokenKey)!.decimals, addresses: {} }
     : undefined);
@@ -768,10 +793,113 @@ export function BridgePanel() {
       }
     : null;
 
-  // OFT lane limits are USD-denominated with 18 decimals, independent of the selected token decimals.
+  // Withdraw router lane limits are USD-denominated with 18 decimals.
   const rateLimitLabel = rateLimitInfo && token
     ? `${Number(formatUnits(rateLimitInfo.available, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })}/${Number(formatUnits(rateLimitInfo.capacity, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} USD`
     : undefined;
+
+  const routePoolLimitContracts = useMemo(() => {
+    if (isNative) return [];
+    const contracts = [];
+    if (srcRouteToken?.oft) {
+      contracts.push({
+        address: srcRouteToken.oft as Address,
+        abi: oftRateLimitAbi,
+        functionName: "getOutboundRateLimitBucket" as const,
+        args: [dstEid] as const,
+        chainId: sourceChainId,
+      });
+    }
+    if (dstRouteToken?.oft) {
+      contracts.push({
+        address: dstRouteToken.oft as Address,
+        abi: oftRateLimitAbi,
+        functionName: "getInboundRateLimitBucket" as const,
+        args: [srcEid] as const,
+        chainId: destChainId,
+      });
+    }
+    return contracts;
+  }, [destChainId, dstEid, dstRouteToken?.oft, isNative, sourceChainId, srcEid, srcRouteToken?.oft]);
+
+  const { data: routePoolLimitData } = useReadContracts({
+    contracts: routePoolLimitContracts,
+    query: {
+      enabled: routePoolLimitContracts.length > 0,
+      refetchInterval: 10_000,
+      retry: 3,
+      retryDelay: 2000,
+    },
+  });
+
+  const sourcePoolLimitIndex = srcRouteToken?.oft ? 0 : -1;
+  const destinationPoolLimitIndex = dstRouteToken?.oft ? (srcRouteToken?.oft ? 1 : 0) : -1;
+  const sourcePoolBucket = sourcePoolLimitIndex >= 0 && routePoolLimitData?.[sourcePoolLimitIndex]?.status === "success"
+    ? routePoolLimitData[sourcePoolLimitIndex].result as RateLimitBucket
+    : undefined;
+  const destinationPoolBucket = destinationPoolLimitIndex >= 0 && routePoolLimitData?.[destinationPoolLimitIndex]?.status === "success"
+    ? routePoolLimitData[destinationPoolLimitIndex].result as RateLimitBucket
+    : undefined;
+
+  const rateLimitSummaries = useMemo<RateLimitSummary[]>(() => {
+    const summaries: RateLimitSummary[] = [];
+    const sourceLabel = CHAINS[sourceChainId]?.shortLabel ?? "Source";
+    const destinationLabel = CHAINS[destChainId]?.shortLabel ?? "Destination";
+    const tokenSymbol = token?.symbol ?? selectedDynamicToken?.symbol ?? "token";
+    const tokenDecimals = token?.decimals ?? selectedDynamicToken?.decimals ?? 6;
+
+    if (!isDeposit && rateLimitBucket) {
+      const bucket = rateLimitBucket as RateLimitBucket;
+      summaries.push({
+        label: `${sourceLabel} router lane`,
+        enabled: bucket.enabled,
+        availableLabel: compactAmount(bucket.available, 18, "USD"),
+        capacityLabel: compactAmount(bucket.capacity, 18, "USD"),
+        low: bucket.enabled && bucket.capacity > 0n && bucket.available * 5n < bucket.capacity,
+      });
+    }
+
+    if (sourcePoolBucket) {
+      summaries.push({
+        label: `${sourceLabel} pool outbound`,
+        enabled: sourcePoolBucket.enabled,
+        availableLabel: compactAmount(sourcePoolBucket.available, tokenDecimals, tokenSymbol),
+        capacityLabel: compactAmount(sourcePoolBucket.capacity, tokenDecimals, tokenSymbol),
+        low: sourcePoolBucket.enabled && sourcePoolBucket.capacity > 0n && sourcePoolBucket.available * 5n < sourcePoolBucket.capacity,
+      });
+    }
+
+    if (destinationPoolBucket) {
+      summaries.push({
+        label: `${destinationLabel} pool inbound`,
+        enabled: destinationPoolBucket.enabled,
+        availableLabel: compactAmount(destinationPoolBucket.available, tokenDecimals, dstRouteToken?.symbol ?? tokenSymbol),
+        capacityLabel: compactAmount(destinationPoolBucket.capacity, tokenDecimals, dstRouteToken?.symbol ?? tokenSymbol),
+        low: destinationPoolBucket.enabled && destinationPoolBucket.capacity > 0n && destinationPoolBucket.available * 5n < destinationPoolBucket.capacity,
+      });
+    }
+
+    if (isDeposit && summaries.length === 0) {
+      summaries.push({
+        label: `${sourceLabel} deposit router`,
+        enabled: false,
+      });
+    }
+
+    return summaries;
+  }, [
+    destChainId,
+    destinationPoolBucket,
+    dstRouteToken?.symbol,
+    isDeposit,
+    rateLimitBucket,
+    selectedDynamicToken?.decimals,
+    selectedDynamicToken?.symbol,
+    sourceChainId,
+    sourcePoolBucket,
+    token?.decimals,
+    token?.symbol,
+  ]);
 
   // --- Lane pause check (withdrawals only) ---
   const { data: isLanePaused } = useReadContract({
@@ -1603,8 +1731,36 @@ export function BridgePanel() {
   // Fee exceeds amount check — flat fee mode: amount must be > flatFee
   const isFeeExceedsAmount = !isFeeExempt && feeMode === 1 && parsedAmount > 0n && flatFee >= parsedAmount;
 
-  // Rate limit exceeded check
-  const isRateLimitExceeded = !isDeposit && rateLimitInfo && parsedAmount > 0n && parsedAmount > rateLimitInfo.available;
+  // Rate limit exceeded check. Router buckets are USD WAD, while OFT pool buckets are token units.
+  const isUsdLikeToken = (token?.symbol ?? "").toUpperCase().startsWith("USDC");
+  const parsedAmountAsUsdWad = token && token.decimals <= 18
+    ? parsedAmount * (10n ** BigInt(18 - token.decimals))
+    : 0n;
+  const isRouterRateLimitExceeded =
+    !isDeposit &&
+    isUsdLikeToken &&
+    rateLimitInfo &&
+    parsedAmountAsUsdWad > 0n &&
+    parsedAmountAsUsdWad > rateLimitInfo.available;
+  const isSourcePoolRateLimitExceeded =
+    isEnabledBucket(sourcePoolBucket) &&
+    parsedAmount > 0n &&
+    parsedAmount > sourcePoolBucket.available;
+  const isDestinationPoolRateLimitExceeded =
+    isEnabledBucket(destinationPoolBucket) &&
+    parsedAmount > 0n &&
+    parsedAmount > destinationPoolBucket.available;
+  const isRateLimitExceeded =
+    !!isRouterRateLimitExceeded ||
+    isSourcePoolRateLimitExceeded ||
+    isDestinationPoolRateLimitExceeded;
+  const rateLimitWarningLabel = isRouterRateLimitExceeded
+    ? rateLimitLabel
+    : isSourcePoolRateLimitExceeded && token
+      ? compactAmount(sourcePoolBucket!.available, token.decimals, token.symbol)
+      : isDestinationPoolRateLimitExceeded && token
+        ? compactAmount(destinationPoolBucket!.available, token.decimals, dstRouteToken?.symbol ?? token.symbol)
+        : rateLimitLabel;
 
   // Shared error + retry banner used in both form and transfer steps
   const renderErrorBanner = (message: string) => (
@@ -2036,12 +2192,12 @@ export function BridgePanel() {
               amount={amount}
               tokenSymbol={token?.symbol ?? ""}
               direction={direction}
-              rateLimitLabel={rateLimitLabel}
               lanePaused={!!isLanePaused}
               feeMode={feeMode}
               flatFee={flatFee}
               tokenDecimals={token?.decimals ?? 6}
               protocolFee={onChainProtocolFee}
+              rateLimits={rateLimitSummaries}
             />
           )}
 
@@ -2185,7 +2341,7 @@ export function BridgePanel() {
             <div className="flex items-center gap-2 px-3 py-2 rounded bg-warning/10 border border-warning/20 text-xs font-mono text-warning">
               <AlertTriangle className="h-3 w-3 shrink-0" />
               <span>
-                Amount exceeds rate limit. Available: {rateLimitLabel}
+                Amount exceeds rate limit. Available: {rateLimitWarningLabel ?? "see route limits"}
               </span>
             </div>
           )}
