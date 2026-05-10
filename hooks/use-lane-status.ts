@@ -49,6 +49,7 @@ type PoolLimit = {
 };
 
 const LANE_LIMIT_TOKEN_SYMBOL = "USDC";
+const LANE_STATUS_REFETCH_INTERVAL_MS = 2_000;
 
 function normalizeTokenSymbol(symbol: string): string {
   return symbol.replace(/\.e$/i, "").toUpperCase();
@@ -145,8 +146,8 @@ export function useLaneStatus(): UseLaneStatusReturn {
     chainId: riseChainId,
     query: {
       enabled: !!globalWithdrawAddr,
-      staleTime: 30_000,
-      refetchInterval: 30_000,
+      staleTime: LANE_STATUS_REFETCH_INTERVAL_MS,
+      refetchInterval: LANE_STATUS_REFETCH_INTERVAL_MS,
     },
   });
 
@@ -177,7 +178,7 @@ export function useLaneStatus(): UseLaneStatusReturn {
     contracts: batchContracts,
     query: {
       enabled: batchContracts.length > 0,
-      refetchInterval: 30 * 1000,
+      refetchInterval: LANE_STATUS_REFETCH_INTERVAL_MS,
     },
   });
 
@@ -262,7 +263,7 @@ export function useLaneStatus(): UseLaneStatusReturn {
     allowFailure: true,
     query: {
       enabled: poolLimitReadPlan.contracts.length > 0,
-      refetchInterval: 10_000,
+      refetchInterval: LANE_STATUS_REFETCH_INTERVAL_MS,
     },
   });
 
