@@ -53,6 +53,7 @@ import {
   isTerminalStatus,
   selectUniqueBridgeJobCandidate,
   type BridgeJobMatchCriteria,
+  lookupNativeByTxHash,
   pollNativeStatus,
 } from "@/lib/bridge-service";
 import { useNetworkStore } from "@/lib/network-store";
@@ -130,6 +131,29 @@ function lzJobCriteriaForSession(
     token: tokenAddress,
     amount: rawAmount,
   };
+}
+
+function isNativeSession(session: BridgeSession | null | undefined): session is BridgeSession {
+  return session?.bridgeKind === "native";
+}
+
+function isTerminalNativePhase(phase: string | undefined): boolean {
+  return phase === "finalized" || phase === "l2_credited" || phase === "failed";
+}
+
+function statusFromNativePhase(phase: string, fallback: BridgeStatus): BridgeStatus {
+  if (phase === "finalized" || phase === "l2_credited") return "completed";
+  if (phase === "failed") return "failed";
+  return fallback;
+}
+
+async function fetchNativeViewForSession(
+  session: BridgeSession,
+  network: "mainnet" | "testnet",
+) {
+  if (session.jobId) return pollNativeStatus(session.jobId, network);
+  if (session.selfBridgeTxHash) return lookupNativeByTxHash(session.selfBridgeTxHash, network);
+  return null;
 }
 
 export function BridgePanel() {
@@ -230,23 +254,16 @@ export function BridgePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Rehydrate native bridge sessions from BE on mount. loadRecentSessions
-  // restores the persisted list but never selects an activeSession, so neither
-  // BridgePanel's LZ resume nor NativeBridgeAction's native resume fire on a
-  // fresh page load. Each non-terminal native session in the list is fetched
-  // once against /v1/bridge/native/status/{jobId} and merged back into the
-  // store; the row's last-known nativePhase + status get replaced by ground
-  // truth so the recent-sessions list and any later setActiveSession click
-  // start from the correct state.
+  // Rehydrate native bridge sessions after localStorage has populated the
+  // recent list. The first render sees an empty list, so this must follow
+  // recentSessions changes instead of running only once on mount.
   useEffect(() => {
     if (recentSessions.length === 0) return;
     const targets = recentSessions.filter(
       (s) =>
-        s.bridgeKind === "native" &&
-        s.jobId &&
-        s.nativePhase !== "finalized" &&
-        s.nativePhase !== "l2_credited" &&
-        s.nativePhase !== "failed",
+        isNativeSession(s) &&
+        (s.jobId || s.selfBridgeTxHash) &&
+        !isTerminalNativePhase(s.nativePhase),
     );
     if (targets.length === 0) return;
     let cancelled = false;
@@ -254,30 +271,75 @@ export function BridgePanel() {
       for (const s of targets) {
         if (cancelled) return;
         try {
-          const view = await pollNativeStatus(s.jobId!, network);
+          const view = await fetchNativeViewForSession(s, network);
           if (cancelled || !view) continue;
+          const status = statusFromNativePhase(view.nativePhase, s.status);
+          if (s.jobId === view.jobId && s.nativePhase === view.nativePhase && s.status === status) continue;
           updateSession(s.id, {
+            jobId: view.jobId,
             nativePhase: view.nativePhase,
-            status:
-              view.nativePhase === "finalized" || view.nativePhase === "l2_credited"
-                ? "completed"
-                : view.nativePhase === "failed"
-                  ? "failed"
-                  : s.status,
+            status,
           });
         } catch {
-          // Transient — leave row alone, NativeBridgeAction will retry once
-          // the user makes the session active.
+          // Transient — leave row alone; active tracking below keeps polling.
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-    // Run once per mount; the list itself is loaded synchronously by the
-    // effect above so the first render always sees the persisted set.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [network, recentSessions, updateSession]);
+
+  // Keep the displayed native tracking card in sync while the user is looking
+  // at it. NativeBridgeAction owns submit-time polling, but it is not mounted
+  // once the session moves to the tracking view.
+  useEffect(() => {
+    if (!isNativeSession(activeSession)) return;
+    if (!activeSession.jobId && !activeSession.selfBridgeTxHash) return;
+    if (isTerminalNativePhase(activeSession.nativePhase)) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const sync = async () => {
+      try {
+        const view = await fetchNativeViewForSession(activeSession, network);
+        if (cancelled || !view) return;
+        const status = statusFromNativePhase(view.nativePhase, activeSession.status);
+        if (
+          activeSession.jobId !== view.jobId ||
+          activeSession.nativePhase !== view.nativePhase ||
+          activeSession.status !== status
+        ) {
+          updateSession(activeSession.id, {
+            jobId: view.jobId,
+            nativePhase: view.nativePhase,
+            status,
+          });
+        }
+        if (!isTerminalNativePhase(view.nativePhase)) {
+          timer = setTimeout(sync, 5_000);
+        }
+      } catch {
+        if (!cancelled) timer = setTimeout(sync, 5_000);
+      }
+    };
+
+    void sync();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [
+    activeSession?.bridgeKind,
+    activeSession?.id,
+    activeSession?.jobId,
+    activeSession?.nativePhase,
+    activeSession?.status,
+    activeSession?.selfBridgeTxHash,
+    network,
+    updateSession,
+  ]);
 
   // Resume polling + sync error when session changes (restore from localStorage or click)
   const sessionSelectedAt = useBridgeStore((s) => s.sessionSelectedAt);
