@@ -183,6 +183,7 @@ export function BridgePanel() {
   const publicClient = usePublicClient();
   const network = useNetworkStore((s) => s.network);
   const { config: bridgeConfig } = useBridgeConfig();
+  const showBridgeDebug = process.env.NEXT_PUBLIC_BRIDGE_DEBUG === "1";
 
   const {
     sourceChainId,
@@ -1335,12 +1336,12 @@ export function BridgePanel() {
 
   /** Operator + Permit2: sign permit, then send to backend for processing */
   const handleOperatorPermit2 = useCallback(async () => {
-    console.log("[operator-permit2] guard:", { address: !!address, tokenAddress: !!tokenAddress, amount: !!amount, token: !!token, routerAddr: !!routerAddr, onChainProtocolFee: String(onChainProtocolFee) });
+    if (showBridgeDebug) console.log("[operator-permit2] guard:", { address: !!address, tokenAddress: !!tokenAddress, amount: !!amount, token: !!token, routerAddr: !!routerAddr, onChainProtocolFee: String(onChainProtocolFee) });
     if (!address || !tokenAddress || !amount || !token || !routerAddr || !onChainProtocolFee) {
-      console.log("[operator-permit2] BLOCKED");
+      if (showBridgeDebug) console.log("[operator-permit2] BLOCKED");
       return;
     }
-    console.log("[operator-permit2] proceeding to sign");
+    if (showBridgeDebug) console.log("[operator-permit2] proceeding to sign");
     setError(null);
     setIsPermitSubmitting(true);
 
@@ -1509,7 +1510,7 @@ export function BridgePanel() {
     // Operator + Permit2: sign permit, send to backend
     // Does NOT require depositAddress — backend pulls tokens directly via permit2
     if (!isSelfBridge && isPermit2) {
-      console.log("[initiate] -> handleOperatorPermit2");
+      if (showBridgeDebug) console.log("[initiate] -> handleOperatorPermit2");
       handleOperatorPermit2();
       return;
     }
@@ -2376,7 +2377,7 @@ export function BridgePanel() {
           }
 
           {/* DEBUG — LZ-only debug panel (permit2 / self-bridge state) */}
-          {!isNative && (
+          {showBridgeDebug && !isNative && (
           <div className="text-[9px] text-yellow-400 p-1 bg-black/50 rounded font-mono">
             signing:{String(permit2.isSigning)} | submitting:{String(isPermitSubmitting)} |
             needsApproval:{String(permit2.needsApproval)} | approvedOk:{String(permit2.isApprovalConfirmed)} |
@@ -2389,7 +2390,7 @@ export function BridgePanel() {
               flow renders its own action button via NativeBridgeAction above. */}
           {!isNative && (
           <Button
-            onClick={() => { console.log("[BTN CLICKED]"); handleInitiateBridge(); }}
+            onClick={() => { if (showBridgeDebug) console.log("[BTN CLICKED]"); handleInitiateBridge(); }}
             disabled={(() => {
               const checks = {
                 noConn: !isConnected,
@@ -2411,7 +2412,7 @@ export function BridgePanel() {
                 submitting: isPermitSubmitting,
               };
               const d = Object.values(checks).some(Boolean);
-              if (d) console.log("[BTN disabled] TRUE:", Object.entries(checks).filter(([,v]) => v).map(([k]) => k).join(", "));
+              if (showBridgeDebug && d) console.log("[BTN disabled] TRUE:", Object.entries(checks).filter(([,v]) => v).map(([k]) => k).join(", "));
               return d;
             })()}
             className={cn(

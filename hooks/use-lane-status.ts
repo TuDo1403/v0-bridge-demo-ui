@@ -10,7 +10,7 @@ import {
   getGlobalDepositAddress,
 } from "@/config/contracts";
 import { CHAINS } from "@/config/chains";
-import { useBridgeConfig } from "@/lib/bridge-config";
+import { type BridgeConfig, type ConfigToken, useBridgeConfig } from "@/lib/bridge-config";
 import { useNetworkStore, NETWORK_CHAIN_IDS } from "@/lib/network-store";
 import type { LaneInfo, RateLimitData } from "@/components/bridge/lane-status";
 
@@ -24,6 +24,8 @@ type PoolLimitKind = "outbound" | "inbound";
 type PoolLimitDescriptor = {
   eid: number;
   kind: PoolLimitKind;
+  decimals: number;
+  symbol: string;
 };
 
 type PoolLimitContract = {
@@ -39,6 +41,51 @@ type RateLimitBucket = {
   capacity: bigint;
   enabled: boolean;
 };
+
+type PoolLimit = {
+  available: number;
+  capacity: number;
+  symbol: string;
+};
+
+const LANE_LIMIT_TOKEN_SYMBOL = "USDC";
+
+function normalizeTokenSymbol(symbol: string): string {
+  return symbol.replace(/\.e$/i, "").toUpperCase();
+}
+
+function findRouteTokenBySymbol(
+  config: BridgeConfig | undefined,
+  eid: number,
+  tokenIds: string[] | undefined,
+  symbol: string,
+): ConfigToken | undefined {
+  if (!config || !tokenIds?.length) return undefined;
+
+  const allowedTokenIds = new Set(tokenIds.map((id) => id.toLowerCase()));
+  return config.tokens.find((token) => {
+    if (!allowedTokenIds.has(token.id.toLowerCase())) return false;
+
+    const tokenChain = token.chains[String(eid)];
+    return !!tokenChain && normalizeTokenSymbol(tokenChain.symbol) === symbol;
+  });
+}
+
+function findRouteToken(
+  config: BridgeConfig | undefined,
+  srcEid: number,
+  dstEid: number,
+  direction: "deposit" | "withdraw",
+  tokenEid: number,
+): ConfigToken | undefined {
+  const route = config?.routes.find((candidate) =>
+    candidate.srcEid === srcEid &&
+    candidate.dstEid === dstEid &&
+    candidate.direction === direction
+  );
+
+  return findRouteTokenBySymbol(config, tokenEid, route?.tokens, LANE_LIMIT_TOKEN_SYMBOL);
+}
 
 function normalizeRateLimitBucket(value: unknown): RateLimitBucket | undefined {
   if (!value) return undefined;
@@ -134,37 +181,68 @@ export function useLaneStatus(): UseLaneStatusReturn {
     },
   });
 
-  const usdcToken = useMemo(
+  const fallbackUsdcToken = useMemo(
     () => bridgeConfig?.tokens.find((token) =>
-      Object.values(token.chains).some((chain) => chain.symbol.toUpperCase().startsWith("USDC"))
+      Object.values(token.chains).some((chain) =>
+        normalizeTokenSymbol(chain.symbol) === LANE_LIMIT_TOKEN_SYMBOL
+      )
     ),
     [bridgeConfig],
   );
 
   const riseEid = CHAINS[riseChainId]?.lzEid;
-  const riseOft = CONTRACTS[riseChainId]?.mintBurnOFT || (riseEid && usdcToken?.chains[String(riseEid)]?.oft);
 
   const poolLimitReadPlan = useMemo(() => {
     const contracts: PoolLimitContract[] = [];
     const descriptors: PoolLimitDescriptor[] = [];
 
-    if (!riseEid || !riseOft || dstEids.length === 0) return { contracts, descriptors };
+    if (!riseEid || dstEids.length === 0) return { contracts, descriptors };
 
     for (const eid of dstEids) {
       const destChainId = Object.values(CHAINS).find((c) => c.lzEid === eid)?.chain.id;
-      const destOft = (destChainId ? CONTRACTS[destChainId]?.lockReleaseOFT : undefined) ||
-        usdcToken?.chains[String(eid)]?.oft;
+      if (!destChainId) continue;
 
-      contracts.push({
-        address: riseOft as Address,
-        abi: oftRateLimitAbi,
-        functionName: "getOutboundRateLimitBucket",
-        args: [eid] as const,
-        chainId: riseChainId,
-      });
-      descriptors.push({ eid, kind: "outbound" });
+      const sourceToken = findRouteToken(
+        bridgeConfig,
+        riseEid,
+        eid,
+        "withdraw",
+        riseEid,
+      );
+      const destToken = findRouteToken(
+        bridgeConfig,
+        eid,
+        riseEid,
+        "deposit",
+        eid,
+      );
+      const sourceTokenChain = sourceToken?.chains[String(riseEid)];
+      const destTokenChain = destToken?.chains[String(eid)];
+      const sourceOft =
+        sourceTokenChain?.oft ||
+        fallbackUsdcToken?.chains[String(riseEid)]?.oft ||
+        CONTRACTS[riseChainId]?.mintBurnOFT;
+      const destOft =
+        destTokenChain?.oft ||
+        fallbackUsdcToken?.chains[String(eid)]?.oft ||
+        CONTRACTS[destChainId]?.lockReleaseOFT;
+      const decimals = sourceToken?.decimals ?? destToken?.decimals ?? fallbackUsdcToken?.decimals ?? 6;
+      const symbol = normalizeTokenSymbol(
+        sourceTokenChain?.symbol ?? destTokenChain?.symbol ?? LANE_LIMIT_TOKEN_SYMBOL,
+      );
 
-      if (destOft && destChainId) {
+      if (sourceOft) {
+        contracts.push({
+          address: sourceOft as Address,
+          abi: oftRateLimitAbi,
+          functionName: "getOutboundRateLimitBucket",
+          args: [eid] as const,
+          chainId: riseChainId,
+        });
+        descriptors.push({ eid, kind: "outbound", decimals, symbol });
+      }
+
+      if (destOft) {
         contracts.push({
           address: destOft as Address,
           abi: oftRateLimitAbi,
@@ -172,12 +250,12 @@ export function useLaneStatus(): UseLaneStatusReturn {
           args: [riseEid] as const,
           chainId: destChainId,
         });
-        descriptors.push({ eid, kind: "inbound" });
+        descriptors.push({ eid, kind: "inbound", decimals, symbol });
       }
     }
 
     return { contracts, descriptors };
-  }, [dstEids, riseChainId, riseEid, riseOft, usdcToken]);
+  }, [bridgeConfig, dstEids, fallbackUsdcToken, riseChainId, riseEid]);
 
   const { data: poolLimitData, isLoading: isPoolLimitLoading } = useReadContracts({
     contracts: poolLimitReadPlan.contracts,
@@ -189,7 +267,7 @@ export function useLaneStatus(): UseLaneStatusReturn {
   });
 
   const poolLimitsByEid = useMemo(() => {
-    const limits = new Map<number, Partial<Record<PoolLimitKind, RateLimitBucket>>>();
+    const limits = new Map<number, Partial<Record<PoolLimitKind, PoolLimit>>>();
 
     poolLimitReadPlan.descriptors.forEach((descriptor, index) => {
       const result = poolLimitData?.[index];
@@ -199,7 +277,11 @@ export function useLaneStatus(): UseLaneStatusReturn {
       if (!bucket?.enabled) return;
 
       const laneLimits = limits.get(descriptor.eid) ?? {};
-      laneLimits[descriptor.kind] = bucket;
+      laneLimits[descriptor.kind] = {
+        available: Number(formatUnits(bucket.available, descriptor.decimals)),
+        capacity: Number(formatUnits(bucket.capacity, descriptor.decimals)),
+        symbol: descriptor.symbol,
+      };
       limits.set(descriptor.eid, laneLimits);
     });
 
@@ -251,25 +333,24 @@ export function useLaneStatus(): UseLaneStatusReturn {
       }
 
       const poolLimits = poolLimitsByEid.get(eid);
-      const outboundPoolBucket = poolLimits?.outbound;
-      const inboundPoolBucket = poolLimits?.inbound;
-      const tokenDecimals = usdcToken?.decimals ?? 6;
+      const outboundPoolLimit = poolLimits?.outbound;
+      const inboundPoolLimit = poolLimits?.inbound;
 
-      if (outboundPoolBucket) {
+      if (outboundPoolLimit) {
         rateLimits.push({
           label: "RISE MintBurn outbound",
-          available: Number(formatUnits(outboundPoolBucket.available, tokenDecimals)),
-          capacity: Number(formatUnits(outboundPoolBucket.capacity, tokenDecimals)),
-          symbol: "USDC",
+          available: outboundPoolLimit.available,
+          capacity: outboundPoolLimit.capacity,
+          symbol: outboundPoolLimit.symbol,
         });
       }
 
-      if (inboundPoolBucket) {
+      if (inboundPoolLimit) {
         rateLimits.push({
           label: `${Object.values(CHAINS).find((c) => c.lzEid === eid)?.shortLabel ?? "Dest"} LockRelease inbound`,
-          available: Number(formatUnits(inboundPoolBucket.available, tokenDecimals)),
-          capacity: Number(formatUnits(inboundPoolBucket.capacity, tokenDecimals)),
-          symbol: "USDC",
+          available: inboundPoolLimit.available,
+          capacity: inboundPoolLimit.capacity,
+          symbol: inboundPoolLimit.symbol,
         });
       }
 
@@ -284,7 +365,7 @@ export function useLaneStatus(): UseLaneStatusReturn {
     });
 
     return result;
-  }, [depositChainIds, riseChainId, dstEids, batchData, poolLimitsByEid, usdcToken]);
+  }, [depositChainIds, riseChainId, dstEids, batchData, poolLimitsByEid]);
 
   return {
     lanes,

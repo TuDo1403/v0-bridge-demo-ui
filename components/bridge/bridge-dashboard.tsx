@@ -6,8 +6,11 @@ import { TxSearch } from "./tx-search";
 import { InfoPanel } from "./info-panel";
 import { RecentSessions } from "./recent-sessions";
 import { ExternalLinksBar } from "./external-links";
+import { useNetworkStore } from "@/lib/network-store";
 
 export function BridgeDashboard() {
+  const network = useNetworkStore((s) => s.network);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-6">
@@ -51,7 +54,7 @@ export function BridgeDashboard() {
           <div className="flex items-center gap-4">
             <ExternalLinksBar />
           </div>
-          <span>Testnet Only</span>
+          <span>{network === "mainnet" ? "Mainnet" : "Testnet"}</span>
         </footer>
       </div>
     </div>

@@ -2,8 +2,11 @@
 
 import { BridgeHeader } from "./header";
 import { ExternalLinksBar } from "./external-links";
+import { useNetworkStore } from "@/lib/network-store";
 
 export function PageShell({ children }: { children: React.ReactNode }) {
+  const network = useNetworkStore((s) => s.network);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-3 py-3 sm:px-6 sm:py-6">
@@ -14,7 +17,7 @@ export function PageShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-4">
             <ExternalLinksBar />
           </div>
-          <span>Testnet Only</span>
+          <span>{network === "mainnet" ? "Mainnet" : "Testnet"}</span>
         </footer>
       </div>
     </div>
