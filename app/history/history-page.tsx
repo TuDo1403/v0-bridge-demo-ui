@@ -9,6 +9,7 @@ import { PageShell } from "@/components/bridge/page-shell";
 import { fetchHistory, pollLzScan } from "@/lib/bridge-service";
 import type { TxHashPair, HistoryResponse, LzTrackingSnapshot } from "@/lib/types";
 import { NativeKindBadge } from "@/components/bridge/native-kind-badge";
+import { NativePhaseTimeline } from "@/components/bridge/native-phase-timeline";
 import { CHAINS, getLzScanBase, eidToChainMeta } from "@/config/chains";
 import { useNetworkStore } from "@/lib/network-store";
 import { TxBadge } from "@/components/bridge/tx-badge";
@@ -51,9 +52,9 @@ const CHAIN_FILTER_OPTIONS = [
 /* ------------------------------------------------------------------ */
 
 function formatTokenAmount(raw?: bigint): string | undefined {
-  if (raw == null || raw === 0n) return undefined;
+  if (raw == null || raw === BigInt(0)) return undefined;
   const decimals = 6;
-  const divisor = 10n ** BigInt(decimals);
+  const divisor = BigInt("1" + "0".repeat(decimals));
   const whole = raw / divisor;
   const frac = raw % divisor;
   const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
@@ -89,16 +90,26 @@ function HistoryItemCard({
   const network = useNetworkStore((s) => s.network);
   const LZ_SCAN_BASE = getLzScanBase(network);
 
-  const srcChain = lzData?.srcEid ? eidToChainMeta(lzData.srcEid) : undefined;
-  const dstChain = lzData?.dstEid ? eidToChainMeta(lzData.dstEid) : undefined;
+  const isNative = item.bridge_kind === "native";
+  const srcChain = item.eid
+    ? eidToChainMeta(item.eid)
+    : lzData?.srcEid
+      ? eidToChainMeta(lzData.srcEid)
+      : undefined;
+  const dstChain = item.dst_eid
+    ? eidToChainMeta(item.dst_eid)
+    : lzData?.dstEid
+      ? eidToChainMeta(lzData.dstEid)
+      : undefined;
 
   // Derive status
-  const lzStatus = lzData?.lzStatus;
-  const isDelivered = lzStatus === "lz_delivered";
-  const isFailed = lzStatus === "lz_failed";
-  const isPending = !lzData || (!isDelivered && !isFailed);
+  const lzStatus = item.lz_status || lzData?.lzStatus;
+  const nativePhase = item.native_phase ?? "";
+  const nativeDone = nativePhase === "l2_credited" || nativePhase === "finalized" || item.status === "completed";
+  const isDelivered = isNative ? nativeDone : lzStatus === "lz_delivered";
+  const isFailed = isNative ? item.status === "failed" || nativePhase === "failed" : lzStatus === "lz_failed";
 
-  const trackUrl = `/track/tx/${item.bridge_tx_hash}`;
+  const trackUrl = isNative && item.job_id ? `/feed?job=${item.job_id}` : `/track/tx/${item.bridge_tx_hash}`;
 
   return (
     <div
@@ -134,7 +145,7 @@ function HistoryItemCard({
               <span className="text-muted-foreground">?</span>
             )}
           </div>
-          {lzData && (
+          {!isNative && lzData && (
             <span className="flex items-center gap-1.5 text-xs font-mono font-medium text-foreground">
               <TokenIcon tokenKey="usdc" className="h-3.5 w-3.5" />
               {(() => {
@@ -160,36 +171,105 @@ function HistoryItemCard({
         ) : (
           <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-primary/15 text-primary">
             <Loader2 className="h-3 w-3 animate-spin" />
-            {lzData ? (lzData.lzStatus?.replace("lz_", "") ?? "pending") : "Pending"}
+            {isNative
+              ? nativePhase
+                ? nativePhase.replace(/_/g, " ")
+                : "Pending"
+              : lzData
+                ? (lzData.lzStatus?.replace("lz_", "") ?? "pending")
+                : "Pending"}
           </span>
         )}
       </div>
 
-      {/* Transaction hashes */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        {item.vault_fund_tx_hash && (
-          <TxBadge
-            label="Vault Fund"
-            hash={item.vault_fund_tx_hash}
-            explorerUrl={srcChain?.explorerTxUrl(item.vault_fund_tx_hash)}
-          />
-        )}
-        <TxBadge
-          label="Bridge Tx"
-          hash={item.bridge_tx_hash}
-          explorerUrl={srcChain?.explorerTxUrl(item.bridge_tx_hash)}
+      {isNative && nativePhase && (
+        <NativePhaseTimeline
+          direction={item.direction === "deposit" ? "deposit" : "withdraw"}
+          phase={nativePhase}
         />
-        {lzData?.dstTxHash && (
+      )}
+
+      {/* Transaction hashes */}
+      {isNative ? (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {item.direction === "deposit" ? (
+            <>
+              {(item.native_deposit_l1_tx_hash ?? item.vault_fund_tx_hash) && (
+                <TxBadge
+                  label="L1 Deposit"
+                  hash={(item.native_deposit_l1_tx_hash ?? item.vault_fund_tx_hash)!}
+                  explorerUrl={srcChain?.explorerTxUrl(
+                    (item.native_deposit_l1_tx_hash ?? item.vault_fund_tx_hash)!
+                  )}
+                />
+              )}
+              {item.native_deposit_l2_tx_hash && (
+                <TxBadge
+                  label="L2 Credit"
+                  hash={item.native_deposit_l2_tx_hash}
+                  explorerUrl={dstChain?.explorerTxUrl(item.native_deposit_l2_tx_hash)}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {(item.native_withdraw_l2_tx_hash ?? item.vault_fund_tx_hash) && (
+                <TxBadge
+                  label="L2 Withdraw"
+                  hash={(item.native_withdraw_l2_tx_hash ?? item.vault_fund_tx_hash)!}
+                  explorerUrl={srcChain?.explorerTxUrl(
+                    (item.native_withdraw_l2_tx_hash ?? item.vault_fund_tx_hash)!
+                  )}
+                />
+              )}
+              {item.native_withdraw_prove_tx_hash && (
+                <TxBadge
+                  label="Prove"
+                  hash={item.native_withdraw_prove_tx_hash}
+                  explorerUrl={dstChain?.explorerTxUrl(item.native_withdraw_prove_tx_hash)}
+                />
+              )}
+              {item.native_withdraw_finalize_tx_hash && (
+                <TxBadge
+                  label="Finalize"
+                  hash={item.native_withdraw_finalize_tx_hash}
+                  explorerUrl={dstChain?.explorerTxUrl(item.native_withdraw_finalize_tx_hash)}
+                />
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {item.vault_fund_tx_hash && (
+            <TxBadge
+              label="Vault Fund"
+              hash={item.vault_fund_tx_hash}
+              explorerUrl={srcChain?.explorerTxUrl(item.vault_fund_tx_hash)}
+            />
+          )}
           <TxBadge
-            label="Dest Tx"
-            hash={lzData.dstTxHash}
-            explorerUrl={dstChain?.explorerTxUrl(lzData.dstTxHash)}
+            label="Bridge Tx"
+            hash={item.bridge_tx_hash}
+            explorerUrl={srcChain?.explorerTxUrl(item.bridge_tx_hash)}
           />
-        )}
-      </div>
+          {(item.lz_dst_tx_hash ?? lzData?.dstTxHash) && (
+            <TxBadge
+              label="Dest Tx"
+              hash={(item.lz_dst_tx_hash ?? lzData?.dstTxHash)!}
+              explorerUrl={dstChain?.explorerTxUrl(
+                (item.lz_dst_tx_hash ?? lzData?.dstTxHash)!
+              )}
+            />
+          )}
+        </div>
+      )}
 
       {/* Compose status */}
-      {lzData?.composeStatus && lzData.composeStatus !== "UNKNOWN" && lzData.composeStatus !== "NOT_EXECUTED" && (
+      {!isNative &&
+        lzData?.composeStatus &&
+        lzData.composeStatus !== "UNKNOWN" &&
+        lzData.composeStatus !== "NOT_EXECUTED" && (
         <div className="flex items-center gap-2 text-[10px] font-mono">
           <span className="text-muted-foreground/60">Compose:</span>
           <span
@@ -203,7 +283,7 @@ function HistoryItemCard({
             {lzData.composeStatus}
           </span>
         </div>
-      )}
+        )}
 
       {/* Bottom row: actions */}
       <div className="flex items-center justify-end gap-2">
@@ -216,15 +296,17 @@ function HistoryItemCard({
           <Search className="h-3 w-3" />
           Track
         </Button>
-        <a
-          href={`${LZ_SCAN_BASE}/tx/${item.bridge_tx_hash}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors"
-        >
-          LZ Scan
-          <ExternalLink className="h-2.5 w-2.5" />
-        </a>
+        {!isNative && (
+          <a
+            href={`${LZ_SCAN_BASE}/tx/${item.bridge_tx_hash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors"
+          >
+            LZ Scan
+            <ExternalLink className="h-2.5 w-2.5" />
+          </a>
+        )}
       </div>
     </div>
   );
@@ -284,7 +366,9 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
 
   // Enrich items with LZ Scan data (batched to avoid render thrashing)
   const enrichItems = useCallback(async (txItems: TxHashPair[]) => {
-    const toFetch = txItems.filter((item) => lzCache[item.bridge_tx_hash] === undefined);
+    const toFetch = txItems.filter(
+      (item) => item.bridge_kind !== "native" && lzCache[item.bridge_tx_hash] === undefined
+    );
     if (toFetch.length === 0) return;
 
     // Batch-mark all as loading in a single state update
@@ -296,7 +380,12 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
 
     // Fetch all in parallel, then batch-update results
     const results = await Promise.allSettled(
-      toFetch.map((item) => pollLzScan(item.bridge_tx_hash, network).then((snapshot) => ({ hash: item.bridge_tx_hash, snapshot })))
+      toFetch.map((item) =>
+        pollLzScan(item.bridge_tx_hash, network).then((snapshot) => ({
+          hash: item.bridge_tx_hash,
+          snapshot,
+        }))
+      )
     );
 
     setLzCache((prev) => {
@@ -450,7 +539,7 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
           <div className="flex flex-col gap-3">
             {items.map((item) => (
               <HistoryItemCard
-                key={item.bridge_tx_hash}
+                key={item.job_id ?? item.bridge_tx_hash}
                 item={item}
                 lzData={lzCache[item.bridge_tx_hash]}
               />

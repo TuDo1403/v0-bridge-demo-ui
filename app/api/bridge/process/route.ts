@@ -7,9 +7,7 @@ export async function POST(request: Request) {
     const net = searchParams.get("net") ?? "mainnet";
     const body = await request.json();
 
-    // Route to the correct backend endpoint based on request shape
     if (body.permit && typeof body.permit === "object") {
-      // Permit2 flow
       const required = ["srcEid", "dstEid", "token", "sender", "receiver", "amount"];
       for (const field of required) {
         if (!body[field]) {
@@ -36,29 +34,10 @@ export async function POST(request: Request) {
       }, net);
     }
 
-    // Vault-funded flow
-    const required = ["srcEid", "dstEid", "userTransferTxHash", "token", "receiver"];
-    for (const field of required) {
-      if (!body[field]) {
-        return NextResponse.json(
-          { error: `Missing required field: ${field}` },
-          { status: 400 }
-        );
-      }
-    }
-
-    return proxyBridgeApi("/v1/bridge/process/vault-funded", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        srcEid: body.srcEid,
-        dstEid: body.dstEid,
-        userTransferTxHash: body.userTransferTxHash,
-        token: body.token,
-        receiver: body.receiver,
-        dappId: body.dappId ?? 0,
-      }),
-    }, net);
+    return NextResponse.json(
+      { error: "vault-funded jobs are created by the event indexer; poll by tx hash instead" },
+      { status: 410 }
+    );
   } catch (err) {
     console.error("[bridge/process] Error:", err);
     return NextResponse.json(

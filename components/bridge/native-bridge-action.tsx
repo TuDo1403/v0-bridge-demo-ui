@@ -15,14 +15,19 @@ import { Button } from "@/components/ui/button";
 import { useBridgeStore } from "@/lib/bridge-store";
 import { useNetworkStore } from "@/lib/network-store";
 import { CONTRACTS } from "@/config/contracts";
-import { CHAINS } from "@/config/chains";
+import { CHAINS, chainIdToEid } from "@/config/chains";
 import {
   l1StandardBridgeAbi,
   l2StandardBridgeAbi,
   ETH_L2_TOKEN_ALIAS,
   DEFAULT_NATIVE_BRIDGE_GAS_LIMIT,
 } from "@/lib/native-abi";
-import { submitNativeProcess, pollNativeStatus } from "@/lib/bridge-service";
+import {
+  lookupBridgeJobsByTxHash,
+  pollNativeStatus,
+  selectUniqueBridgeJobCandidate,
+  type BridgeJobMatchCriteria,
+} from "@/lib/bridge-service";
 import { cn } from "@/lib/utils";
 
 /**
@@ -39,10 +44,10 @@ import { cn } from "@/lib/utils";
  *      snapshot into store.pendingNativeTx so post-receipt registration uses
  *      the values committed on-chain even if the user mutates the form (or
  *      this component unmounts via a token toggle) before the receipt lands.
- *   2. waitForTransactionReceipt resolves → POST /native/process for jobId,
- *      using the snapshot — never the live form state.
- *   3. createSession with bridgeKind="native"; clear pendingNativeTx; start a
- *      5s recursive-setTimeout poll on /native/status/{jobId}. setTimeout
+ *   2. waitForTransactionReceipt resolves → create a local session and poll
+ *      native status by the source tx hash until the event indexer creates the job.
+ *   3. Once indexed, attach the jobId and start a 5s recursive-setTimeout poll
+ *      on /native/status/{jobId}. setTimeout
  *      avoids the overlapping-request risk that setInterval has when poll
  *      latency exceeds the 5s cadence. TrackingCard renders
  *      <NativePhaseTimeline> automatically when session.bridgeKind ===
@@ -106,8 +111,10 @@ export function NativeBridgeAction() {
     setStatusMsg("Awaiting wallet signature…");
 
     let txHash: Hash;
+    let amountRaw = "";
     try {
       const value = parseEther(amount);
+      amountRaw = value.toString();
       const minGasLimit = DEFAULT_NATIVE_BRIDGE_GAS_LIMIT;
       if (direction === "deposit") {
         if (!srcContracts.l1StandardBridge) throw new Error("L1 standard bridge not configured");
@@ -149,6 +156,8 @@ export function NativeBridgeAction() {
       srcEid,
       dstEid,
       sourceChainId,
+      destChainId,
+      amountRaw,
       network,
     });
     setStatusMsg("Tx submitted, waiting for confirmation…");
@@ -186,6 +195,23 @@ export function NativeBridgeAction() {
     }
     polledJobIdRef.current = null;
   }, []);
+
+  const nativeLookupCriteria = useCallback(
+    (overrides?: Partial<BridgeJobMatchCriteria>): BridgeJobMatchCriteria => ({
+      bridgeKind: "native",
+      direction: overrides?.direction ?? activeSession?.direction ?? direction,
+      srcEid:
+        overrides?.srcEid ??
+        (activeSession ? chainIdToEid(activeSession.sourceChainId) : srcChain?.lzEid),
+      dstEid:
+        overrides?.dstEid ??
+        (activeSession ? chainIdToEid(activeSession.destChainId) : dstChain?.lzEid),
+      sender: overrides?.sender ?? activeSession?.userAddress ?? address,
+      receiver: overrides?.receiver ?? activeSession?.recipientAddress ?? recipient,
+      amount: overrides?.amount ?? activeSession?.nativeAmountRaw,
+    }),
+    [activeSession, address, direction, dstChain?.lzEid, recipient, srcChain?.lzEid],
+  );
   const startPolling = useCallback(
     (sessionId: string, jobId: string) => {
       if (polledJobIdRef.current === jobId) return;
@@ -227,8 +253,48 @@ export function NativeBridgeAction() {
     [network, stopPolling, updateSession],
   );
 
-  // After the user-side tx is mined, hand off to the gateway and start
-  // polling. Reads metadata from the submit-time snapshot in
+  const startNativeTxLookup = useCallback(
+    (sessionId: string, txHash: Hash, criteria?: BridgeJobMatchCriteria) => {
+      const pollKey = `tx:${txHash}`;
+      if (polledJobIdRef.current === pollKey) return;
+      stopPolling();
+      polledJobIdRef.current = pollKey;
+      const lookupCriteria = criteria ?? nativeLookupCriteria();
+
+      const tick = async () => {
+        if (polledJobIdRef.current !== pollKey) return;
+        try {
+          const jobs = await lookupBridgeJobsByTxHash(txHash, network);
+          const view = selectUniqueBridgeJobCandidate(jobs, lookupCriteria);
+          if (polledJobIdRef.current !== pollKey) return;
+          if (view?.jobId) {
+            const phase = view.phase ?? "pending_l2_init";
+            updateSession(sessionId, {
+              jobId: view.jobId,
+              nativePhase: phase,
+              status:
+                phase === "finalized" || phase === "l2_credited"
+                  ? "completed"
+                  : "bridge_submitted",
+            });
+            setStatusMsg(`Tracking job ${view.jobId.slice(0, 8)}…`);
+            startPolling(sessionId, view.jobId);
+            return;
+          }
+          setStatusMsg("Confirmed. Waiting for indexer to create a unique matching job…");
+        } catch (e) {
+          console.warn("native tx lookup error", e);
+        }
+        if (polledJobIdRef.current !== pollKey) return;
+        pollTimeoutRef.current = setTimeout(tick, 5000);
+      };
+      pollTimeoutRef.current = setTimeout(tick, 0);
+    },
+    [nativeLookupCriteria, network, startPolling, stopPolling, updateSession],
+  );
+
+  // After the user-side tx is mined, start event-indexer lookup. Reads metadata
+  // from the submit-time snapshot in
   // pendingNativeTx, not the live form, so it stays correct even if the
   // user mutated form fields between submit and receipt arriving.
   useEffect(() => {
@@ -237,41 +303,36 @@ export function NativeBridgeAction() {
     const snapshot = pendingNativeTx;
     (async () => {
       try {
-        setStatusMsg("Confirmed. Registering with relayer…");
-        const { jobId, nativePhase } = await submitNativeProcess(
-          {
-            direction: snapshot.direction,
-            txHash: snapshot.hash,
-            srcEid: snapshot.srcEid,
-            dstEid: snapshot.dstEid,
-            sender: snapshot.sender,
-            receiver: snapshot.receiver,
-          },
-          snapshot.network,
-        );
-        if (cancelled) return;
-
+        setStatusMsg("Confirmed. Waiting for indexer…");
         const session = createSession({
           userAddress: snapshot.sender,
           recipientAddress: snapshot.receiver,
           depositAddress: "",
         });
         updateSession(session.id, {
-          jobId,
-          nativePhase,
+          nativePhase:
+            snapshot.direction === "deposit" ? "pending_l1_init" : "pending_l2_init",
           selfBridgeTxHash: snapshot.hash,
           status: "bridge_submitted",
+          sourceChainId: snapshot.sourceChainId,
+          destChainId: snapshot.destChainId,
+          direction: snapshot.direction,
+          nativeAmountRaw: snapshot.amountRaw,
         });
-        setStatusMsg(`Tracking job ${jobId.slice(0, 8)}…`);
-        // Registration succeeded — clear the in-flight snapshot so this
-        // effect doesn't re-fire on the next render and the submit button
-        // re-enables for follow-up bridges.
+        if (cancelled) return;
         setPendingNativeTx(null);
-
-        startPolling(session.id, jobId);
+        startNativeTxLookup(session.id, snapshot.hash, {
+          bridgeKind: "native",
+          direction: snapshot.direction,
+          srcEid: snapshot.srcEid,
+          dstEid: snapshot.dstEid,
+          sender: snapshot.sender,
+          receiver: snapshot.receiver,
+          amount: snapshot.amountRaw,
+        });
       } catch (e: unknown) {
         const m = e instanceof Error ? e.message : String(e);
-        if (!cancelled) setErrorMsg(`Relayer registration failed: ${m}`);
+        if (!cancelled) setErrorMsg(`Native tx tracking failed: ${m}`);
       }
     })();
     return () => {
@@ -283,7 +344,7 @@ export function NativeBridgeAction() {
     createSession,
     updateSession,
     setPendingNativeTx,
-    startPolling,
+    startNativeTxLookup,
   ]);
 
   // Resume polling for any in-flight native session — covers page reloads and
@@ -293,11 +354,15 @@ export function NativeBridgeAction() {
   useEffect(() => {
     if (!activeSession) return;
     if (activeSession.bridgeKind !== "native") return;
+    if (!activeSession.jobId && activeSession.selfBridgeTxHash) {
+      startNativeTxLookup(activeSession.id, activeSession.selfBridgeTxHash as Hash);
+      return;
+    }
     if (!activeSession.jobId) return;
     const phase = activeSession.nativePhase;
     if (phase === "finalized" || phase === "l2_credited" || phase === "failed") return;
     startPolling(activeSession.id, activeSession.jobId);
-  }, [activeSession, startPolling]);
+  }, [activeSession, startNativeTxLookup, startPolling]);
 
   useEffect(() => {
     return () => {

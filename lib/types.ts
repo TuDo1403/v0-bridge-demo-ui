@@ -81,16 +81,6 @@ export function mapBackendStatus(backendStatus: string): BridgeStatus {
 /*  API types                                                          */
 /* ------------------------------------------------------------------ */
 
-/* -- Request: vault-funded flow (user already transferred tokens to vault) -- */
-export interface VaultFundedRequest {
-  srcEid: number;
-  dstEid: number;
-  userTransferTxHash: string;
-  token: string;
-  receiver: string;
-  dappId: number;
-}
-
 /* -- Request: permit flow (Permit2, PermitRelay, or EIP-2612) -- */
 export interface PermitProcessRequest {
   srcEid: number;
@@ -109,7 +99,7 @@ export interface PermitProcessRequest {
   };
 }
 
-/* -- Response from POST /v1/bridge/process/vault-funded or /permit -- */
+/* -- Response from POST /v1/bridge/process/permit -- */
 export interface BridgeProcessResponse {
   jobId: string;
   status: string;
@@ -126,6 +116,23 @@ export interface TxHashPair {
    *  bridge rows set this to "native" so HistoryItemCard can show the right
    *  badge alongside the route. */
   bridge_kind?: BridgeKind;
+  native_phase?: string | null;
+  eid?: number;
+  dst_eid?: number;
+  direction?: "deposit" | "withdraw";
+  src_address?: string;
+  dst_address?: string;
+  token?: string;
+  amount?: string;
+  created_at?: string;
+  lz_status?: string;
+  lz_guid?: string | null;
+  lz_dst_tx_hash?: string | null;
+  native_deposit_l1_tx_hash?: string | null;
+  native_deposit_l2_tx_hash?: string | null;
+  native_withdraw_l2_tx_hash?: string | null;
+  native_withdraw_prove_tx_hash?: string | null;
+  native_withdraw_finalize_tx_hash?: string | null;
 }
 
 /* -- Paginated history response -- */
@@ -216,6 +223,8 @@ export interface BridgeSession {
   bridgeKind?: BridgeKind;
   /** Native bridge phase (only set when bridgeKind === "native"). See lib/native-phases.ts. */
   nativePhase?: string;
+  /** Native bridge amount in wei, captured for tx-hash lookup disambiguation. */
+  nativeAmountRaw?: string;
   /** Dapp ID for compose routing (0 = direct bridge, deposit-only) */
   dappId?: number;
   /** Bridge mode: operator-sponsored or self-bridge */

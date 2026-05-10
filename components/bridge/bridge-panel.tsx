@@ -45,16 +45,18 @@ import {
   resolveTokenAddress,
 } from "@/lib/bridge-config";
 import {
-  submitVaultFunded,
   submitPermit,
   pollBridgeStatus,
   pollLzScan,
+  lookupBridgeJobsByTxHash,
   lookupByTxHash,
   isTerminalStatus,
+  selectUniqueBridgeJobCandidate,
+  type BridgeJobMatchCriteria,
   pollNativeStatus,
 } from "@/lib/bridge-service";
 import { useNetworkStore } from "@/lib/network-store";
-import { CONTRACT_ERROR_MAP, mapBackendStatus, isComposeFailed, type BridgeStatus, type BridgeSession } from "@/lib/types";
+import { CONTRACT_ERROR_MAP, mapBackendStatus, isComposeFailed, type BridgeStatus, type BridgeSession, type TxHashPair } from "@/lib/types";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,6 +84,53 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+async function waitForIndexedLzJob(
+  txHash: string,
+  network: "mainnet" | "testnet",
+  criteria: BridgeJobMatchCriteria,
+  attempts = 60,
+): Promise<TxHashPair | null> {
+  for (let i = 0; i < attempts; i++) {
+    const jobs = await lookupBridgeJobsByTxHash(txHash, network).catch(() => []);
+    const job = selectUniqueBridgeJobCandidate(jobs, criteria);
+    if (job?.jobId) {
+      return {
+        vault_fund_tx_hash: txHash,
+        bridge_tx_hash: "",
+        job_id: job.jobId,
+        status: job.status,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  return null;
+}
+
+function lzJobCriteriaForSession(
+  session: BridgeSession,
+  tokenAddress: string | undefined,
+  tokenDecimals: number | undefined,
+): BridgeJobMatchCriteria {
+  let rawAmount: string | undefined;
+  if (session.amount && tokenDecimals != null) {
+    try {
+      rawAmount = parseUnits(session.amount, tokenDecimals).toString();
+    } catch {
+      rawAmount = undefined;
+    }
+  }
+  return {
+    bridgeKind: "lz",
+    direction: session.direction,
+    srcEid: chainIdToEid(session.sourceChainId),
+    dstEid: chainIdToEid(session.destChainId),
+    sender: session.userAddress,
+    receiver: session.recipientAddress,
+    token: tokenAddress,
+    amount: rawAmount,
+  };
+}
 
 export function BridgePanel() {
   const { address, isConnected, chainId: walletChainId } = useAccount();
@@ -138,7 +187,7 @@ export function BridgePanel() {
 
     // Transfer in progress (pre-bridge) — only for vault-funded flows.
     // Permit sessions skip the transfer step entirely (sign → backend → polling).
-    if (activeSession.transferMode !== "permit2" && activeSession.transferMode !== "eip2612" && activeSession.transferMode !== "permit" &&
+    if (activeSession.transferMode !== "permit2" && activeSession.transferMode !== "eip2612" &&
         (s === "awaiting_transfer" || s === "transfer_submitted" ||
         s === "transfer_mined" || s === "deposit_verified")) {
       return "transfer";
@@ -1388,26 +1437,23 @@ export function BridgePanel() {
         status: "transfer_mined",
       });
 
-      // Check if a job already exists (block poller may have auto-created it)
-      // Vault is always known — operator will auto-bridge. Submit to backend
-      // regardless of bridgeMode (returns existing job if block poller already created one).
-      const sessionDappId = activeSession.dappId ?? 0;
-
-      const res = await submitVaultFunded({
-        srcEid: chainIdToEid(activeSession.sourceChainId),
-        dstEid: chainIdToEid(activeSession.destChainId),
-        userTransferTxHash: hash,
-        token: (resolveTokenAddress(bridgeConfig, activeSession.tokenKey, chainIdToEid(activeSession.sourceChainId)) ?? getTokenAddressFallback(activeSession.tokenKey, activeSession.sourceChainId))!,
-        receiver: activeSession.recipientAddress || activeSession.userAddress,
-        dappId: sessionDappId,
-      }, network);
+      const indexed = await waitForIndexedLzJob(
+        hash,
+        network,
+        lzJobCriteriaForSession(activeSession, tokenAddress ?? undefined, token?.decimals),
+      );
+      if (!indexed?.job_id) {
+        setError("Transfer confirmed. Waiting for the indexer to create the bridge job; search by tx hash shortly.");
+        setManualTxHash("");
+        return;
+      }
 
       updateSession(activeSession.id, {
-        status: mapBackendStatus(res.status),
-        jobId: res.jobId,
+        status: mapBackendStatus(indexed.status ?? "pending"),
+        jobId: indexed.job_id,
       });
 
-      startPolling(res.jobId, activeSession.id);
+      startPolling(indexed.job_id, activeSession.id);
       setManualTxHash("");
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "Verification failed";

@@ -18,6 +18,8 @@ export interface PendingNativeTx {
   srcEid: number;
   dstEid: number;
   sourceChainId: number;
+  destChainId: number;
+  amountRaw: string;
   network: "mainnet" | "testnet";
 }
 

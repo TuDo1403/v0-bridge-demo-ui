@@ -2,13 +2,18 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import { parseUnits } from "viem";
 import { useBridgeStore } from "@/lib/bridge-store";
-import { submitVaultFunded } from "@/lib/bridge-service";
+import {
+  lookupBridgeJobsByTxHash,
+  selectUniqueBridgeJobCandidate,
+  type BridgeJobMatchCriteria,
+} from "@/lib/bridge-service";
 import { mapBackendStatus, isComposeFailed, isVaultRescueEligible, isComposeRescueNeeded } from "@/lib/types";
-import { CHAINS, chainIdToEid, getLzScanBase, BLOCK_TIME_SECONDS } from "@/config/chains";
+import { CHAINS, getLzScanBase, BLOCK_TIME_SECONDS, chainIdToEid } from "@/config/chains";
 import { useNetworkStore } from "@/lib/network-store";
 import { useBlockConfirmations } from "@/hooks/use-block-confirmations";
-import { TOKENS, getTokenAddress, KNOWN_DAPPS, isRoundTripDapp as isRoundTripFallback } from "@/config/contracts";
+import { TOKENS, KNOWN_DAPPS, isRoundTripDapp as isRoundTripFallback } from "@/config/contracts";
 import { useBridgeConfig, isDappRoundTrip } from "@/lib/bridge-config";
 import type { BridgeSession } from "@/lib/types";
 import { TxBadge } from "./tx-badge";
@@ -57,6 +62,28 @@ type TrackingPhase =
 /** Whether this session uses compose (dappId > 0, deposit-only) */
 function hasCompose(session: BridgeSession): boolean {
   return (session.dappId ?? 0) > 0 && session.direction !== "withdraw";
+}
+
+function lzJobCriteriaForSession(session: BridgeSession): BridgeJobMatchCriteria {
+  const token = TOKENS[session.tokenKey];
+  let amount: string | undefined;
+  if (session.amount && token) {
+    try {
+      amount = parseUnits(session.amount, token.decimals).toString();
+    } catch {
+      amount = undefined;
+    }
+  }
+  return {
+    bridgeKind: "lz",
+    direction: session.direction,
+    srcEid: chainIdToEid(session.sourceChainId),
+    dstEid: chainIdToEid(session.destChainId),
+    sender: session.userAddress,
+    receiver: session.recipientAddress,
+    token: token?.addresses[session.sourceChainId],
+    amount,
+  };
 }
 
 function derivePhase(session: BridgeSession): TrackingPhase {
@@ -835,7 +862,7 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                   )}
                 </div>
               </div>
-              {/* Re-submit button — only for operator-mode sessions without a job yet */}
+              {/* Re-check button — only for operator-mode sessions without a job yet */}
               {!session.selfBridgeTxHash && !session.jobId && session.userTransferTxHash && (
                 <div className="flex items-center gap-2">
                   <Button
@@ -844,20 +871,15 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                     className="font-mono text-xs gap-1.5 border-warning/30 hover:bg-warning/10 text-warning"
                     onClick={async () => {
                       try {
-                        const token = getTokenAddress(session.tokenKey, session.sourceChainId);
-                        if (!token) throw new Error("Token address not found");
-                        const res = await submitVaultFunded({
-                          srcEid: chainIdToEid(session.sourceChainId),
-                          dstEid: chainIdToEid(session.destChainId),
-                          userTransferTxHash: session.userTransferTxHash!,
-                          token,
-                          receiver: session.recipientAddress ?? session.userAddress,
-                          dappId: session.dappId ?? 0,
-                        }, network);
+                        const jobs = await lookupBridgeJobsByTxHash(session.userTransferTxHash!, network);
+                        const job = selectUniqueBridgeJobCandidate(jobs, lzJobCriteriaForSession(session));
+                        if (!job?.jobId) {
+                          throw new Error("Indexer has not created a unique matching job yet");
+                        }
                         const updated: BridgeSession = {
                           ...session,
-                          status: mapBackendStatus(res.status),
-                          jobId: res.jobId,
+                          status: mapBackendStatus(job.status),
+                          jobId: job.jobId,
                           error: undefined,
                         };
                         updateSession(session.id, {
@@ -874,7 +896,7 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
                     }}
                   >
                     <RotateCcw className="h-3 w-3" />
-                    Submit to Backend
+                    Check Indexer
                   </Button>
                 </div>
               )}

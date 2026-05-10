@@ -1,5 +1,4 @@
 import type {
-  VaultFundedRequest,
   PermitProcessRequest,
   BridgeProcessResponse,
   BridgeStatusResponse,
@@ -12,31 +11,9 @@ const API_BASE = "/api/bridge";
 const LZ_API = "/api/lz";
 
 /** Parse error body from a failed API response and throw */
-async function throwApiError(res: Response, fallback: string): never {
+async function throwApiError(res: Response, fallback: string): Promise<never> {
   const err = await res.json().catch(() => ({ error: "Unknown error" }));
   throw new Error(err.error ?? `${fallback}: ${res.status}`);
-}
-
-/** Submit a vault-funded bridge request. */
-export async function submitVaultFunded(
-  req: VaultFundedRequest,
-  network: "mainnet" | "testnet" = "mainnet"
-): Promise<BridgeProcessResponse> {
-  const res = await fetch(`${API_BASE}/process?net=${network}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-
-  if (!res.ok) {
-    if (res.status === 409) {
-      const err = await res.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(err.error ?? "Duplicate transfer already submitted");
-    }
-    await throwApiError(res, "Bridge process failed");
-  }
-
-  return res.json();
 }
 
 /** Submit a permit2 bridge request. */
@@ -153,6 +130,89 @@ export function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "error" || status === "failed" || status === "roundtrip_completed";
 }
 
+export interface BridgeJobItem {
+  jobId?: string;
+  bridgeKind: string;
+  status: string;
+  phase?: string;
+  direction: "deposit" | "withdraw";
+  srcEid: number;
+  dstEid: number;
+  sender: string;
+  receiver: string;
+  token: string;
+  amount: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BridgeJobMatchCriteria {
+  bridgeKind: "lz" | "native";
+  direction?: "deposit" | "withdraw";
+  srcEid?: number;
+  dstEid?: number;
+  sender?: string;
+  receiver?: string;
+  token?: string;
+  amount?: string;
+}
+
+export function isNativeBridgeJobKind(kind: string | undefined): boolean {
+  return kind === "native_optimism" || kind === "op_stack_native";
+}
+
+export function isLayerZeroBridgeJobKind(kind: string | undefined): boolean {
+  return !isNativeBridgeJobKind(kind);
+}
+
+export function selectUniqueBridgeJobCandidate(
+  jobs: BridgeJobItem[],
+  criteria: BridgeJobMatchCriteria
+): BridgeJobItem | null {
+  const matches = jobs.filter((job) => bridgeJobMatches(job, criteria));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function bridgeJobMatches(job: BridgeJobItem, criteria: BridgeJobMatchCriteria): boolean {
+  if (criteria.bridgeKind === "native" && !isNativeBridgeJobKind(job.bridgeKind)) return false;
+  if (criteria.bridgeKind === "lz" && !isLayerZeroBridgeJobKind(job.bridgeKind)) return false;
+  if (!matchString(job.direction, criteria.direction)) return false;
+  if (!matchNumber(job.srcEid, criteria.srcEid)) return false;
+  if (!matchNumber(job.dstEid, criteria.dstEid)) return false;
+  if (!matchAddress(job.sender, criteria.sender)) return false;
+  if (!matchAddress(job.receiver, criteria.receiver)) return false;
+  if (!matchAddress(job.token, criteria.token)) return false;
+  if (!matchString(job.amount, criteria.amount)) return false;
+  return true;
+}
+
+function matchNumber(actual: number | undefined, expected: number | undefined): boolean {
+  return expected == null || actual === expected;
+}
+
+function matchString(actual: string | undefined, expected: string | undefined): boolean {
+  return expected == null || actual === expected;
+}
+
+function matchAddress(actual: string | undefined, expected: string | undefined): boolean {
+  return expected == null || normalizeAddress(actual) === normalizeAddress(expected);
+}
+
+function normalizeAddress(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+export async function lookupBridgeJobsByTxHash(
+  txHash: string,
+  network: "mainnet" | "testnet" = "mainnet"
+): Promise<BridgeJobItem[]> {
+  const params = new URLSearchParams({ txHash, net: network });
+  const res = await fetch(`${API_BASE}/jobs?${params.toString()}`);
+  if (!res.ok) await throwApiError(res, "Bridge job lookup failed");
+  const body = await res.json();
+  return Array.isArray(body.items) ? body.items : [];
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // OP Stack native bridge endpoints
 // ──────────────────────────────────────────────────────────────────────────
@@ -198,37 +258,6 @@ export interface NativeJobView {
     l2TxHash?: string;
     l2FinalizedAt?: string;
   };
-}
-
-/** Submit a native bridge tx for tracking. The user has just signed the L1
- *  deposit (or L2 withdraw-init) tx via wagmi; this returns a stable jobId
- *  the FE can poll via pollNativeStatus immediately — without first waiting
- *  for the indexer to ingest the on-chain event. Mirrors submitVaultFunded
- *  for the LZ flow. */
-export async function submitNativeProcess(
-  req: {
-    direction: "deposit" | "withdraw";
-    txHash: string;
-    srcEid: number;
-    dstEid: number;
-    sender: string;
-    /** Destination-chain recipient. For self-bridges, omit (defaults to sender).
-     *  For send-to-other (custom recipient via L1StandardBridge.bridgeETHTo /
-     *  L2StandardBridge.withdrawTo / OptimismPortal2.depositTransaction(_to)),
-     *  pass the user-chosen address — the BE preserves it on placeholder
-     *  hydration so the UI shows the correct recipient even when the on-chain
-     *  protocol target is the bridge contract. */
-    receiver?: string;
-  },
-  network: "mainnet" | "testnet" = "mainnet",
-): Promise<{ jobId: string; status: string; nativePhase: string; created: boolean }> {
-  const res = await fetch(`${API_BASE}/native-process?net=${network}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  if (!res.ok) await throwApiError(res, "Native process submit failed");
-  return res.json();
 }
 
 /** Poll a native bridge job by ID. Throws on transport / non-404 server errors;

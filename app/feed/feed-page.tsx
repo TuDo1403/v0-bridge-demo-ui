@@ -24,6 +24,7 @@ import {
   type JobFeedFilter,
   type TimeRange,
 } from "@/lib/stats-service";
+import { isNativeBridgeJobKind } from "@/lib/bridge-service";
 import { eidToChainMeta, getLzScanBase } from "@/config/chains";
 import { useNetworkStore } from "@/lib/network-store";
 import { cn } from "@/lib/utils";
@@ -97,7 +98,7 @@ const LZ_TERMINAL_FAILURES = new Set([
  *  rendering stays correct even when running against an older BE binary
  *  that doesn't yet return the field. */
 function isNativeRow(item: JobFeedItem): boolean {
-  if (item.bridgeKind === "native_optimism") return true;
+  if (isNativeBridgeJobKind(item.bridgeKind)) return true;
   if (item.bridgeKind && item.bridgeKind !== "") return false;
   return item.token === "0x0000000000000000000000000000000000000000";
 }
@@ -805,7 +806,7 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
             if (!txHash) return <span className="text-muted-foreground">Awaiting source tx</span>;
             return (
               <DetailRow
-                label="Bridge TX"
+                label={item.direction === "deposit" ? "L1 Deposit" : "L2 Withdraw"}
                 value={shortHash(txHash)}
                 copyable
                 fullValue={txHash}
@@ -856,7 +857,7 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
           {item.direction === "deposit" ? (
             item.nativeDepositL2TxHash ? (
               <DetailRow
-                label="Dst TX"
+                label="L2 Credit"
                 value={shortHash(item.nativeDepositL2TxHash)}
                 copyable
                 fullValue={item.nativeDepositL2TxHash}

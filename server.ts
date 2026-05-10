@@ -14,6 +14,12 @@ import { parse } from "url";
 import next from "next";
 import { WebSocket, WebSocketServer } from "ws";
 
+import {
+  buildBackendWebSocketHeaders,
+  buildBackendWebSocketUrl,
+  isAllowedWebSocketProxyOrigin,
+} from "./lib/ws-proxy";
+
 const dev = process.env.NODE_ENV !== "production";
 const hostname = process.env.HOSTNAME ?? "0.0.0.0";
 const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -58,16 +64,23 @@ app.prepare().then(() => {
       socket.destroy();
       return;
     }
+    if (!isAllowedWebSocketProxyOrigin(req.headers.origin, req.headers.host)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
 
-    // Build backend WS URL with API key.
+    // Build backend WS URL. The proxy authenticates to the backend via
+    // header injection so the secret never enters browser-visible URLs.
     const baseUrl = net === "testnet" ? BRIDGE_API_TESTNET : BRIDGE_API_MAINNET;
     const apiKey = net === "testnet" ? API_KEY_TESTNET : API_KEY_MAINNET;
-    const wsBase = baseUrl.replace(/^http/, "ws");
-    const backendUrl = `${wsBase}/v1/bridge/ws/vault/${eid}/${vaultAddress}?token=${token}&api_key=${apiKey}`;
+    const backendUrl = buildBackendWebSocketUrl(baseUrl, eid, vaultAddress, token);
 
     wss.handleUpgrade(req, socket, head, (clientWs) => {
       // Connect to backend WS.
-      const backendWs = new WebSocket(backendUrl);
+      const backendWs = new WebSocket(backendUrl, {
+        headers: buildBackendWebSocketHeaders(apiKey),
+      });
 
       backendWs.on("open", () => {
         wss.emit("connection", clientWs, req);
