@@ -130,7 +130,7 @@ export const CONTRACTS: Record<number, ChainContracts> = {
   // Mainnet — Ethereum
   1: {
     globalDeposit: "0xE5E6268977575ccFcB50055c17a4563b8b0Ce24E",
-    lockReleaseOFT: "0x8b648f051AE72E040166FA5f171838111d982d86",
+    lockReleaseOFT: "0xf43a70B250a86003a952af7A7986CcC243B89D81",
   },
   // Mainnet — Base
   8453: {
