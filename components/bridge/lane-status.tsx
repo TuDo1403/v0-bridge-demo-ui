@@ -12,6 +12,8 @@ export interface RateLimitData {
   capacity: number;
   /** Token symbol */
   symbol: string;
+  /** Short user-facing label for this limiter */
+  label?: string;
 }
 
 export interface LaneInfo {
@@ -21,6 +23,8 @@ export interface LaneInfo {
   paused: boolean;
   /** Structured rate limit data for visual display */
   rateLimit?: RateLimitData;
+  /** All active route limiters, e.g. router USD + source outbound + destination inbound */
+  rateLimits?: RateLimitData[];
 }
 
 function StatusDot({ active, paused }: { active: boolean; paused: boolean }) {
@@ -109,10 +113,17 @@ function LaneCard({ lane }: { lane: LaneInfo }) {
         </span>
       </div>
 
-      {/* Rate limit bar (withdrawal lanes only) */}
-      {lane.rateLimit && !lane.paused && (
-        <RateLimitBar data={lane.rateLimit} />
-      )}
+      {/* Rate limit bars (withdrawal lanes only) */}
+      {!lane.paused && (lane.rateLimits?.length ? lane.rateLimits : lane.rateLimit ? [lane.rateLimit] : []).map((limit) => (
+        <div key={`${limit.label ?? "limit"}-${limit.symbol}`} className="mt-1.5">
+          {limit.label && (
+            <span className="text-[10px] font-mono text-muted-foreground/60">
+              {limit.label}
+            </span>
+          )}
+          <RateLimitBar data={limit} />
+        </div>
+      ))}
     </div>
   );
 }

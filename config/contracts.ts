@@ -39,7 +39,7 @@ export const TOKENS: Record<string, TokenMeta> = {
       // Testnet
       11155111: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
       [baseSepoliaChain.id]: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-      11155931: "0x6bf6e258b3c5650b448cb1112835048ba5619dc1",
+      11155931: "0x8c49BaEeC2Ea2356598Ef33eA5dd52267643E677",
       // Mainnet
       1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
       8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -105,7 +105,7 @@ export const CONTRACTS: Record<number, ChainContracts> = {
   // Testnet — Sepolia
   11155111: {
     globalDeposit: "0x7d09ed69FE463012D99bED997C381304B70CC9cc",
-    lockReleaseOFT: "0x3e48337D4614f1A79ca72D39BE50c4BFa0901318",
+    lockReleaseOFT: "0xCF56C4c60Dc560D8732EA96fd21A76DBB9CF8120",
     // OP Stack native bridge → RISE testnet (chain id 11155931)
     optimismPortal: "0x77Cce5Cd26C75140C35c38104D0c655c7a786acB",
     disputeGameFactory: "0x790E18c477bFB49c784ca0aED244648166A5022b",
@@ -116,6 +116,7 @@ export const CONTRACTS: Record<number, ChainContracts> = {
   // Testnet — Base Sepolia
   [baseSepoliaChain.id]: {
     globalDeposit: "0x708A2705C095937F37A07944B9ce543A6213C738",
+    lockReleaseOFT: "0xaf2A2c9Ba5e6B9bbE4F541CC19883b24D5125c45",
   },
   // Testnet — RISE Testnet
   11155931: {
@@ -124,7 +125,7 @@ export const CONTRACTS: Record<number, ChainContracts> = {
     l2ToL1MessagePasser: "0x4200000000000000000000000000000000000016",
     l2StandardBridge: "0x4200000000000000000000000000000000000010",
     usdcMintBurnAdapter: "0x27f65Cc64883C35eF496d4D88708875930FC777D",
-    mintBurnOFT: "0xCc83d99fd0c63c73A13B0dE850De0A3d1114241F",
+    mintBurnOFT: "0x719BFF7BB36510fA86dA32e4541DBA535Db29564",
   },
   // Mainnet — Ethereum
   1: {
