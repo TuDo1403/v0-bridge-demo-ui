@@ -55,6 +55,7 @@ import {
   isTerminalStatus,
   selectUniqueBridgeJobCandidate,
   type BridgeJobMatchCriteria,
+  type NativeJobView,
   lookupNativeByTxHash,
   pollNativeStatus,
 } from "@/lib/bridge-service";
@@ -166,6 +167,44 @@ function statusFromNativePhase(phase: string, fallback: BridgeStatus): BridgeSta
   if (phase === "finalized" || phase === "l2_credited") return "completed";
   if (phase === "failed") return "failed";
   return fallback;
+}
+
+function nativeSessionUpdateFromView(view: NativeJobView, fallback: BridgeStatus): Partial<BridgeSession> {
+  const sourceTxHash =
+    view.direction === "withdraw" ? view.withdrawal?.l2TxHash : view.deposit?.l1TxHash;
+  const completionTxHash =
+    view.direction === "withdraw" ? view.withdrawal?.finalizeTxHash : view.deposit?.l2TxHash;
+
+  return {
+    jobId: view.jobId,
+    nativePhase: view.nativePhase,
+    status: statusFromNativePhase(view.nativePhase, fallback),
+    ...(sourceTxHash ? { selfBridgeTxHash: sourceTxHash } : {}),
+    ...(completionTxHash ? { destinationTxHash: completionTxHash } : {}),
+  };
+}
+
+function hasNativeSessionUpdateChanged(
+  session: BridgeSession,
+  updates: Partial<BridgeSession>,
+): boolean {
+  return (
+    session.jobId !== updates.jobId ||
+    session.nativePhase !== updates.nativePhase ||
+    session.status !== updates.status ||
+    (!!updates.selfBridgeTxHash && session.selfBridgeTxHash !== updates.selfBridgeTxHash) ||
+    (!!updates.destinationTxHash && session.destinationTxHash !== updates.destinationTxHash)
+  );
+}
+
+function nativeSessionNeedsTxEnrichment(session: BridgeSession): boolean {
+  if (session.bridgeKind !== "native") return false;
+  if (!session.jobId && !session.selfBridgeTxHash) return false;
+  if (session.direction === "deposit") return !session.destinationTxHash;
+  if (session.direction === "withdraw") {
+    return !session.selfBridgeTxHash || (session.nativePhase === "finalized" && !session.destinationTxHash);
+  }
+  return false;
 }
 
 async function fetchNativeViewForSession(
@@ -285,7 +324,7 @@ export function BridgePanel() {
       (s) =>
         isNativeSession(s) &&
         (s.jobId || s.selfBridgeTxHash) &&
-        !isTerminalNativePhase(s.nativePhase),
+        (!isTerminalNativePhase(s.nativePhase) || nativeSessionNeedsTxEnrichment(s)),
     );
     if (targets.length === 0) return;
     let cancelled = false;
@@ -295,13 +334,9 @@ export function BridgePanel() {
         try {
           const view = await fetchNativeViewForSession(s, network);
           if (cancelled || !view) continue;
-          const status = statusFromNativePhase(view.nativePhase, s.status);
-          if (s.jobId === view.jobId && s.nativePhase === view.nativePhase && s.status === status) continue;
-          updateSession(s.id, {
-            jobId: view.jobId,
-            nativePhase: view.nativePhase,
-            status,
-          });
+          const updates = nativeSessionUpdateFromView(view, s.status);
+          if (!hasNativeSessionUpdateChanged(s, updates)) continue;
+          updateSession(s.id, updates);
         } catch {
           // Transient — leave row alone; active tracking below keeps polling.
         }
@@ -318,7 +353,7 @@ export function BridgePanel() {
   useEffect(() => {
     if (!isNativeSession(activeSession)) return;
     if (!activeSession.jobId && !activeSession.selfBridgeTxHash) return;
-    if (isTerminalNativePhase(activeSession.nativePhase)) return;
+    if (isTerminalNativePhase(activeSession.nativePhase) && !nativeSessionNeedsTxEnrichment(activeSession)) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -327,17 +362,9 @@ export function BridgePanel() {
       try {
         const view = await fetchNativeViewForSession(activeSession, network);
         if (cancelled || !view) return;
-        const status = statusFromNativePhase(view.nativePhase, activeSession.status);
-        if (
-          activeSession.jobId !== view.jobId ||
-          activeSession.nativePhase !== view.nativePhase ||
-          activeSession.status !== status
-        ) {
-          updateSession(activeSession.id, {
-            jobId: view.jobId,
-            nativePhase: view.nativePhase,
-            status,
-          });
+        const updates = nativeSessionUpdateFromView(view, activeSession.status);
+        if (hasNativeSessionUpdateChanged(activeSession, updates)) {
+          updateSession(activeSession.id, updates);
         }
         if (!isTerminalNativePhase(view.nativePhase)) {
           timer = setTimeout(sync, 5_000);

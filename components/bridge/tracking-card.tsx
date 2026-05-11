@@ -439,6 +439,10 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
   // (~30s on Sepolia), well before LZ-style 15-confirmation thresholds, so
   // an N/15 counter is misleading.
   const bridgeTxHash = session.selfBridgeTxHash || session.backendProcessTxHash;
+  const bridgeTxLabel = isNative
+    ? session.direction === "withdraw" ? "L2 Tx" : "L1 Tx"
+    : "Bridge Tx";
+  const nativeCompletionTxLabel = session.direction === "withdraw" ? "L1 Tx" : "L2 Tx";
   const showConfirmations = !isNative && (phase === "indexing" || phase === "waiting" || phase === "inflight") && !!bridgeTxHash;
   const confirmations = useBlockConfirmations(
     showConfirmations ? session.sourceChainId : undefined,
@@ -543,11 +547,11 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
       </div>
 
       {/* Bridge tx hashes (always visible) */}
-      {(session.selfBridgeTxHash || session.backendProcessTxHash) && (
+      {(bridgeTxHash || (isNative && session.destinationTxHash)) && (
         <div className="px-4 pb-2 flex flex-wrap items-center gap-2">
           {/* Fund Tx: only for vault-funded flows with a separate transfer */}
           {session.userTransferTxHash && session.userTransferTxHash !== "permit2" &&
-           session.userTransferTxHash !== (session.selfBridgeTxHash || session.backendProcessTxHash) && (
+           session.userTransferTxHash !== bridgeTxHash && (
             <TxBadge
               label="Fund Tx"
               hash={session.userTransferTxHash}
@@ -555,12 +559,22 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
               className="!py-0.5 !text-[10px]"
             />
           )}
-          <TxBadge
-            label="Bridge Tx"
-            hash={(session.selfBridgeTxHash || session.backendProcessTxHash)!}
-            explorerUrl={sourceChain?.explorerTxUrl((session.selfBridgeTxHash || session.backendProcessTxHash)!)}
-            className="!py-0.5 !text-[10px]"
-          />
+          {bridgeTxHash && (
+            <TxBadge
+              label={bridgeTxLabel}
+              hash={bridgeTxHash}
+              explorerUrl={sourceChain?.explorerTxUrl(bridgeTxHash)}
+              className="!py-0.5 !text-[10px]"
+            />
+          )}
+          {isNative && session.destinationTxHash && session.destinationTxHash !== bridgeTxHash && (
+            <TxBadge
+              label={nativeCompletionTxLabel}
+              hash={session.destinationTxHash}
+              explorerUrl={destChain?.explorerTxUrl(session.destinationTxHash)}
+              className="!py-0.5 !text-[10px]"
+            />
+          )}
         </div>
       )}
 
@@ -636,7 +650,7 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
             </span>
             {/* Fund Tx: only for vault-funded flows with a separate transfer */}
             {session.userTransferTxHash && session.userTransferTxHash !== "permit2" &&
-             session.userTransferTxHash !== (session.selfBridgeTxHash || session.backendProcessTxHash) && (
+             session.userTransferTxHash !== bridgeTxHash && (
               <TxBadge
                 label="Fund Tx"
                 hash={session.userTransferTxHash}
@@ -644,14 +658,21 @@ export function TrackingCard({ session }: { session: BridgeSession }) {
               />
             )}
             <TxBadge
-              label="Bridge Tx"
-              hash={session.selfBridgeTxHash || session.backendProcessTxHash}
+              label={bridgeTxLabel}
+              hash={bridgeTxHash}
               explorerUrl={
-                (session.selfBridgeTxHash || session.backendProcessTxHash)
-                  ? sourceChain?.explorerTxUrl((session.selfBridgeTxHash || session.backendProcessTxHash)!)
+                bridgeTxHash
+                  ? sourceChain?.explorerTxUrl(bridgeTxHash)
                   : undefined
               }
             />
+            {isNative && session.destinationTxHash && session.destinationTxHash !== bridgeTxHash && (
+              <TxBadge
+                label={nativeCompletionTxLabel}
+                hash={session.destinationTxHash}
+                explorerUrl={destChain?.explorerTxUrl(session.destinationTxHash)}
+              />
+            )}
             {!isNative && (
               <>
                 <TxBadge

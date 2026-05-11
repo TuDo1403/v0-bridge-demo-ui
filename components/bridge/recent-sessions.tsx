@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useBridgeStore } from "@/lib/bridge-store";
 import { useNetworkStore } from "@/lib/network-store";
-import { STATUS_LABELS, mapBackendStatus, isComposeFailed, isVaultRescueEligible, isComposeRescueNeeded, type BridgeSession, type BridgeStatus } from "@/lib/types";
+import { STATUS_LABELS, isComposeFailed, isVaultRescueEligible, isComposeRescueNeeded, type BridgeSession } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
 import { TOKENS } from "@/config/contracts";
 import { cn } from "@/lib/utils";
@@ -74,7 +74,6 @@ function SessionRow({
   isActive: boolean;
 }) {
   const setActiveSession = useBridgeStore((s) => s.setActiveSession);
-  const updateSession = useBridgeStore((s) => s.updateSession);
   const removeSession = useBridgeStore((s) => s.removeSession);
   const sourceLabel = CHAINS[session.sourceChainId]?.shortLabel ?? "??";
   const destLabel = CHAINS[session.destChainId]?.shortLabel ?? "??";
@@ -103,7 +102,7 @@ function SessionRow({
           }
         }}
         className={cn(
-          "flex items-center gap-2.5 px-3 py-2 rounded transition-all w-full text-left group",
+          "grid grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] sm:grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto] items-center gap-2.5 px-3 py-2 rounded transition-all w-full text-left group",
           isActive
             ? "bg-primary/10 border border-primary/20"
             : "bg-muted/30 hover:bg-muted/60 border border-transparent"
@@ -118,24 +117,26 @@ function SessionRow({
           <span title="Deposit"><ArrowUpRight className="h-3 w-3 text-primary shrink-0" /></span>
         )}
 
-        <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground min-w-0">
-          {session.bridgeKind === "native" && (
-            <NativeKindBadge kind="native" className="!py-0 !text-[8px] shrink-0" textOnly />
-          )}
-          <ChainIcon chainKey={CHAINS[session.sourceChainId]?.iconKey} className="h-3 w-3 shrink-0" />
-          <span>{sourceLabel}</span>
-          <ArrowRight className="h-2.5 w-2.5 shrink-0" />
-          <ChainIcon chainKey={CHAINS[session.destChainId]?.iconKey} className="h-3 w-3 shrink-0" />
-          <span>{destLabel}</span>
-        </div>
+        <div className="min-w-0 flex flex-col gap-0.5">
+          <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground min-w-0">
+            {session.bridgeKind === "native" && (
+              <NativeKindBadge kind="native" className="!py-0 !text-[8px] shrink-0" textOnly />
+            )}
+            <ChainIcon chainKey={CHAINS[session.sourceChainId]?.iconKey} className="h-3 w-3 shrink-0" />
+            <span className="truncate">{sourceLabel}</span>
+            <ArrowRight className="h-2.5 w-2.5 shrink-0" />
+            <ChainIcon chainKey={CHAINS[session.destChainId]?.iconKey} className="h-3 w-3 shrink-0" />
+            <span className="truncate">{destLabel}</span>
+          </div>
 
-        <span className="text-[11px] font-mono text-foreground whitespace-nowrap">
-          {session.amount} {token?.symbol ?? session.tokenKey}
-        </span>
+          <span className="text-[11px] font-mono text-foreground truncate">
+            {session.amount} {token?.symbol ?? session.tokenKey}
+          </span>
+        </div>
 
         <span
           className={cn(
-            "text-[9px] font-mono px-1.5 py-0.5 rounded ml-auto shrink-0 whitespace-nowrap",
+            "text-[9px] font-mono px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap justify-self-end",
             session.status === "completed" && "bg-success/15 text-success",
             isRecovered && "bg-chart-4/15 text-chart-4",
             isFailed && "bg-destructive/15 text-destructive-foreground",
@@ -159,7 +160,7 @@ function SessionRow({
           </span>
         )}
 
-        <span className="text-[9px] text-muted-foreground/50 font-mono shrink-0 hidden sm:block">
+        <span className="text-[9px] text-muted-foreground/50 font-mono shrink-0 hidden sm:block justify-self-end">
           {timeAgo}
         </span>
 

@@ -27,8 +27,28 @@ import {
   pollNativeStatus,
   selectUniqueBridgeJobCandidate,
   type BridgeJobMatchCriteria,
+  type NativeJobView,
 } from "@/lib/bridge-service";
 import { cn } from "@/lib/utils";
+
+function nativeSessionUpdateFromView(view: NativeJobView) {
+  const sourceTxHash =
+    view.direction === "withdraw" ? view.withdrawal?.l2TxHash : view.deposit?.l1TxHash;
+  const completionTxHash =
+    view.direction === "withdraw" ? view.withdrawal?.finalizeTxHash : view.deposit?.l2TxHash;
+
+  return {
+    nativePhase: view.nativePhase,
+    status:
+      view.nativePhase === "failed"
+        ? "failed" as const
+        : view.nativePhase === "finalized" || view.nativePhase === "l2_credited"
+        ? "completed" as const
+        : "bridge_submitted" as const,
+    ...(sourceTxHash ? { selfBridgeTxHash: sourceTxHash } : {}),
+    ...(completionTxHash ? { destinationTxHash: completionTxHash } : {}),
+  };
+}
 
 /**
  * NativeBridgeAction is the action-button + status-row block that BridgePanel
@@ -225,13 +245,7 @@ export function NativeBridgeAction() {
           const view = await pollNativeStatus(jobId, network);
           if (polledJobIdRef.current !== jobId) return;
           if (view) {
-            updateSession(sessionId, {
-              nativePhase: view.nativePhase,
-              status:
-                view.nativePhase === "finalized" || view.nativePhase === "l2_credited"
-                  ? "completed"
-                  : "bridge_submitted",
-            });
+            updateSession(sessionId, nativeSessionUpdateFromView(view));
             const terminal =
               view.nativePhase === "finalized" ||
               view.nativePhase === "l2_credited" ||
