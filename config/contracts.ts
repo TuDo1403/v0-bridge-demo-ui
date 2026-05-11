@@ -131,6 +131,12 @@ export const CONTRACTS: Record<number, ChainContracts> = {
   1: {
     globalDeposit: "0xE5E6268977575ccFcB50055c17a4563b8b0Ce24E",
     lockReleaseOFT: "0xf43a70B250a86003a952af7A7986CcC243B89D81",
+    // OP Stack native bridge -> RISE mainnet (chain id 4153)
+    optimismPortal: "0xad92Fa18EB74E46Db844240623124BF46589db4C",
+    disputeGameFactory: "0x6A4139810986CF13408330e14C4ac9Daf0511aA3",
+    anchorStateRegistry: "0x551A672d703966D83C3EC3ea0e844f43c3373c91",
+    ethLockbox: "0x0000000000000000000000000000000000000000",
+    l1StandardBridge: "0x553257678Dd11a6668a92934AAB005e420c6535A",
   },
   // Mainnet — Base
   8453: {
@@ -143,6 +149,9 @@ export const CONTRACTS: Record<number, ChainContracts> = {
   // Mainnet — RISE
   4153: {
     globalWithdraw: "0xE5E6268977575ccFcB50055c17a4563b8b0Ce24E",
+    // OP Stack predeploys (same address on every OP Stack L2)
+    l2ToL1MessagePasser: "0x4200000000000000000000000000000000000016",
+    l2StandardBridge: "0x4200000000000000000000000000000000000010",
     usdcMintBurnAdapter: "0x82675d0553D802039e6776C006BEb1b820a69d55",
     mintBurnOFT: "0x5118c3dfdF9d3d558678E03b6684f67CFb6bD8A1",
   },
