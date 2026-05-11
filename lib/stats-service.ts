@@ -22,6 +22,8 @@ export interface StatsSummary {
 }
 
 export interface TokenVolumeStat {
+  chainId: number;
+  lzEid?: number;
   eid: number;
   chainName: string;
   token: string;
@@ -34,6 +36,8 @@ export interface TokenVolumeStat {
 }
 
 export interface ChainFeeStat {
+  chainId: number;
+  lzEid?: number;
   eid: number;
   chainName: string;
   token: string;
@@ -55,6 +59,51 @@ export interface VolumePoint {
 
 export interface VolumeResponse {
   points: VolumePoint[];
+  timeRange: string;
+  groupBy: string;
+}
+
+export interface TokenVolumePoint {
+  date: string;
+  chainId: number;
+  lzEid?: number;
+  eid: number;
+  chainName: string;
+  token: string;
+  depositVolume: string;
+  withdrawVolume: string;
+  totalVolume: string;
+  depositCount: number;
+  withdrawCount: number;
+  transactionCount: number;
+}
+
+export interface ChainFeePoint {
+  date: string;
+  chainId: number;
+  lzEid?: number;
+  eid: number;
+  chainName: string;
+  token: string;
+  fee: string;
+  transactionCount: number;
+}
+
+export interface OperatorTxCostPoint {
+  date: string;
+  chainId: number;
+  lzEid?: number;
+  chainName: string;
+  role: string;
+  gasCostWei: string;
+  sentWei: string;
+  transactionCount: number;
+}
+
+export interface TrendsResponse {
+  tokenVolumes: TokenVolumePoint[];
+  chainFees: ChainFeePoint[];
+  operatorTxCosts: OperatorTxCostPoint[];
   timeRange: string;
   groupBy: string;
 }
@@ -166,6 +215,18 @@ export async function fetchStatsVolume(
     `${API_BASE}/volume?range=${range_}&groupBy=${groupBy}&net=${network}`,
   );
   if (!res.ok) throw new Error("Failed to fetch volume data");
+  return res.json();
+}
+
+export async function fetchStatsTrends(
+  range_: TimeRange = "30d",
+  groupBy = "day",
+  network: "mainnet" | "testnet" = "mainnet",
+): Promise<TrendsResponse> {
+  const res = await fetch(
+    `${API_BASE}/trends?range=${range_}&groupBy=${groupBy}&net=${network}`,
+  );
+  if (!res.ok) throw new Error("Failed to fetch trend data");
   return res.json();
 }
 

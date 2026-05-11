@@ -7,11 +7,13 @@ import { useBridgeConfig, type BridgeConfig, type ConfigToken } from "@/lib/brid
 import {
   fetchStatsSummary,
   fetchStatsVolume,
+  fetchStatsTrends,
   fetchStatsJobs,
   fetchSyncProgress,
   type TimeRange,
   type StatsSummary,
   type VolumeResponse,
+  type TrendsResponse,
   type JobHealthResponse,
   type SyncProgressResponse,
 } from "@/lib/stats-service";
@@ -29,6 +31,8 @@ import {
 import {
   AreaChart,
   Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -64,6 +68,17 @@ const VOLUME_CHART_CONFIG: ChartConfig = {
   deposits: { label: "Deposits", color: "hsl(142, 76%, 36%)" },
   withdrawals: { label: "Withdrawals", color: "hsl(217, 91%, 60%)" },
 };
+
+const TREND_COLORS = [
+  "hsl(217, 91%, 60%)",
+  "hsl(142, 76%, 36%)",
+  "hsl(38, 92%, 50%)",
+  "hsl(0, 84%, 60%)",
+  "hsl(280, 65%, 60%)",
+  "hsl(185, 70%, 42%)",
+  "hsl(24, 95%, 53%)",
+  "hsl(330, 81%, 60%)",
+];
 
 const DIRECTION_COLORS = ["hsl(142, 76%, 36%)", "hsl(217, 91%, 60%)"];
 
@@ -101,6 +116,12 @@ export function StatsPage() {
   const { data: volume, isLoading: volumeLoading } = useSWR(
     ["stats-volume", timeRange, network],
     () => fetchStatsVolume(timeRange, timeRange === "24h" ? "hour" : "day", network),
+    { refreshInterval: 30_000 },
+  );
+
+  const { data: trends, isLoading: trendsLoading } = useSWR(
+    ["stats-trends", timeRange, network],
+    () => fetchStatsTrends(timeRange, timeRange === "24h" ? "hour" : "day", network),
     { refreshInterval: 30_000 },
   );
 
@@ -154,6 +175,26 @@ export function StatsPage() {
 
         {/* Volume Chart */}
         <VolumeChart data={volume} loading={volumeLoading} />
+
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+          <FeeTrendChart
+            data={trends}
+            config={bridgeConfig}
+            prices={prices}
+            loading={trendsLoading || configLoading || pricesLoading}
+          />
+          <OperatorTxCostTrendChart
+            data={trends}
+            prices={prices}
+            loading={trendsLoading || pricesLoading}
+          />
+          <TokenTrendChart
+            data={trends}
+            config={bridgeConfig}
+            prices={prices}
+            loading={trendsLoading || configLoading || pricesLoading}
+          />
+        </div>
 
         {/* Pie Charts Row */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -213,14 +254,14 @@ function TokenVolumeBreakdown({
             </thead>
             <tbody>
               {rows.map((row) => {
-                const token = resolveStatsToken(config, row.token, row.eid);
+                const token = resolveStatsToken(config, row.token, statsTokenEid(row));
                 const total = formatTokenUnits(row.totalVolume, token.decimals);
                 const deposits = formatTokenUnits(row.depositVolume, token.decimals);
                 const withdrawals = formatTokenUnits(row.withdrawVolume, token.decimals);
 
                 return (
                   <tr
-                    key={`${row.eid}:${row.token}`}
+                    key={`${row.chainId}:${row.token}`}
                     className="border-b border-border/20 last:border-0"
                   >
                     <td className="py-2 pr-3">
@@ -271,7 +312,7 @@ function ChainFeesTable({
       <div className="flex items-center gap-1.5 mb-3">
         <ReceiptText className="h-3 w-3 text-primary" />
         <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
-          Transaction Fees by Chain
+          Bridge Fees by Chain
         </span>
       </div>
 
@@ -295,13 +336,13 @@ function ChainFeesTable({
             </thead>
             <tbody>
               {rows.map((row) => {
-                const token = resolveStatsToken(config, row.token, row.eid);
+                const token = resolveStatsToken(config, row.token, statsTokenEid(row));
                 const fee = tokenAmountNumber(row.fee, token.decimals);
                 const usd = fee * tokenUsdPrice(token.symbol, prices);
 
                 return (
                   <tr
-                    key={`${row.eid}:${row.token}`}
+                    key={`${row.chainId}:${row.token}`}
                     className="border-b border-border/20 last:border-0"
                   >
                     <td className="py-2 pr-3">
@@ -527,6 +568,162 @@ function VolumeChart({
               fillOpacity={0.4}
             />
           </AreaChart>
+        </ChartContainer>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Trend Line Charts                                                  */
+/* ------------------------------------------------------------------ */
+
+function FeeTrendChart({
+  data,
+  config,
+  prices,
+  loading,
+}: {
+  data: TrendsResponse | undefined;
+  config: BridgeConfig | undefined;
+  prices: TokenPrices | undefined;
+  loading: boolean;
+}) {
+  const chart = buildFeeTrendChart(data, config, prices);
+  return (
+    <TrendLineChart
+      title="Bridge Fee Over Time (USD)"
+      data={chart.data}
+      series={chart.series}
+      groupBy={data?.groupBy}
+      loading={loading}
+    />
+  );
+}
+
+function TokenTrendChart({
+  data,
+  config,
+  prices,
+  loading,
+}: {
+  data: TrendsResponse | undefined;
+  config: BridgeConfig | undefined;
+  prices: TokenPrices | undefined;
+  loading: boolean;
+}) {
+  const chart = buildTokenTrendChart(data, config, prices);
+  return (
+    <TrendLineChart
+      title="Token Volume Over Time (USD)"
+      data={chart.data}
+      series={chart.series}
+      groupBy={data?.groupBy}
+      loading={loading}
+    />
+  );
+}
+
+function OperatorTxCostTrendChart({
+  data,
+  prices,
+  loading,
+}: {
+  data: TrendsResponse | undefined;
+  prices: TokenPrices | undefined;
+  loading: boolean;
+}) {
+  const chart = buildOperatorTxCostTrendChart(data, prices);
+  return (
+    <TrendLineChart
+      title="Operator Tx Cost Over Time (USD)"
+      data={chart.data}
+      series={chart.series}
+      groupBy={data?.groupBy}
+      loading={loading}
+    />
+  );
+}
+
+function TrendLineChart({
+  title,
+  data,
+  series,
+  groupBy,
+  loading,
+}: {
+  title: string;
+  data: TrendChartRow[];
+  series: TrendSeries[];
+  groupBy: string | undefined;
+  loading: boolean;
+}) {
+  const chartConfig = series.reduce<ChartConfig>((acc, item) => {
+    acc[item.key] = { label: item.label, color: item.color };
+    return acc;
+  }, {});
+
+  return (
+    <div className="border border-border/50 bg-card rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
+          {title}
+        </span>
+        {groupBy && (
+          <span className="text-[10px] font-mono text-muted-foreground">
+            {groupBy === "hour" ? "Hourly" : "Daily"}
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center h-[250px]">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : data.length === 0 || series.length === 0 ? (
+        <div className="flex items-center justify-center h-[250px] text-xs font-mono text-muted-foreground">
+          No data for this period
+        </div>
+      ) : (
+        <ChartContainer config={chartConfig} className="h-[250px] w-full">
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-border/30" />
+            <XAxis
+              dataKey="date"
+              tickFormatter={formatChartDateTick}
+              className="text-[10px]"
+              tick={{ fontSize: 10 }}
+            />
+            <YAxis
+              tickFormatter={(v: number) => compactUSD(v)}
+              className="text-[10px]"
+              tick={{ fontSize: 10 }}
+              width={64}
+            />
+            <ChartTooltip
+              content={
+                <ChartTooltipContent
+                  labelFormatter={(label) => {
+                    if (typeof label === "string" && label.includes("T"))
+                      return label.replace("T", " ");
+                    return String(label);
+                  }}
+                />
+              }
+            />
+            <ChartLegend content={<ChartLegendContent />} />
+            {series.map((item) => (
+              <Line
+                key={item.key}
+                type="monotone"
+                dataKey={item.key}
+                stroke={`var(--color-${item.key})`}
+                strokeWidth={2}
+                dot={false}
+                connectNulls={false}
+              />
+            ))}
+          </LineChart>
         </ChartContainer>
       )}
     </div>
@@ -982,6 +1179,15 @@ interface StatsTokenMeta {
   decimals?: number;
 }
 
+interface TrendSeries {
+  key: string;
+  label: string;
+  color: string;
+  total: number;
+}
+
+type TrendChartRow = { date: string } & Record<string, number | string | null>;
+
 interface TokenPrices {
   ethUsd?: number;
 }
@@ -997,9 +1203,9 @@ async function fetchTokenPrices(): Promise<TokenPrices> {
 }
 
 function resolveStatsToken(
-  config: BridgeConfig | undefined,
-  tokenAddress: string,
-  eid?: number,
+	config: BridgeConfig | undefined,
+	tokenAddress: string,
+	eid?: number,
 ): StatsTokenMeta {
   if (tokenAddress === "native:ETH") {
     return { symbol: "ETH", decimals: 18 };
@@ -1017,6 +1223,10 @@ function resolveStatsToken(
   }
 
   return { symbol: shortAddress(tokenAddress) };
+}
+
+function statsTokenEid(row: { lzEid?: number; eid?: number }): number | undefined {
+  return row.lzEid ?? (row.eid && row.eid > 0 ? row.eid : undefined);
 }
 
 function findStatsToken(
@@ -1103,6 +1313,178 @@ function tokenUsdPrice(symbol: string, prices: TokenPrices | undefined): number 
   return Number.NaN;
 }
 
+function buildFeeTrendChart(
+  data: TrendsResponse | undefined,
+  config: BridgeConfig | undefined,
+  prices: TokenPrices | undefined,
+): { data: TrendChartRow[]; series: TrendSeries[] } {
+  const buckets = new Map<string, TrendChartRow>();
+  const series = new Map<string, TrendSeries>();
+
+  for (const point of data?.chainFees ?? []) {
+    const token = resolveStatsToken(config, point.token, statsTokenEid(point));
+    const fee = tokenAmountNumber(point.fee, token.decimals);
+    const usd = fee * tokenUsdPrice(token.symbol, prices);
+
+    const key = `fee${point.chainId}`;
+    const value = Number.isFinite(usd) ? usd : null;
+    const existing = series.get(key);
+    if (existing) {
+      existing.total += value ?? 0;
+    } else {
+      series.set(key, {
+        key,
+        label: point.chainName,
+        color: TREND_COLORS[series.size % TREND_COLORS.length],
+        total: value ?? 0,
+      });
+    }
+
+    const bucket = buckets.get(point.date) ?? { date: point.date };
+    addTrendValue(bucket, key, value);
+    buckets.set(point.date, bucket);
+  }
+
+  return finalizeTrendChart(buckets, series);
+}
+
+function buildTokenTrendChart(
+  data: TrendsResponse | undefined,
+  config: BridgeConfig | undefined,
+  prices: TokenPrices | undefined,
+): { data: TrendChartRow[]; series: TrendSeries[] } {
+  const buckets = new Map<string, TrendChartRow>();
+  const series = new Map<string, TrendSeries>();
+
+  for (const point of data?.tokenVolumes ?? []) {
+    const token = resolveStatsToken(config, point.token, statsTokenEid(point));
+    const amount = tokenAmountNumber(point.totalVolume, token.decimals);
+    const usd = amount * tokenUsdPrice(token.symbol, prices);
+
+    const key = `token${point.chainId}_${hashTrendKey(point.token)}`;
+    const value = Number.isFinite(usd) ? usd : null;
+    const label = `${token.symbol} ${point.chainName}`;
+    const existing = series.get(key);
+    if (existing) {
+      existing.total += value ?? 0;
+    } else {
+      series.set(key, {
+        key,
+        label,
+        color: TREND_COLORS[series.size % TREND_COLORS.length],
+        total: value ?? 0,
+      });
+    }
+
+    const bucket = buckets.get(point.date) ?? { date: point.date };
+    addTrendValue(bucket, key, value);
+    buckets.set(point.date, bucket);
+  }
+
+  return finalizeTrendChart(buckets, series);
+}
+
+function buildOperatorTxCostTrendChart(
+  data: TrendsResponse | undefined,
+  prices: TokenPrices | undefined,
+): { data: TrendChartRow[]; series: TrendSeries[] } {
+  const buckets = new Map<string, TrendChartRow>();
+  const series = new Map<string, TrendSeries>();
+  const ethUsd = prices?.ethUsd ?? Number.NaN;
+
+  for (const point of data?.operatorTxCosts ?? []) {
+    const gasCostWei = BigInt(point.gasCostWei || "0");
+    const sentWei = BigInt(point.sentWei || "0");
+    const totalCostEth = tokenAmountNumber((gasCostWei + sentWei).toString(), 18);
+    const usd = totalCostEth * ethUsd;
+
+    const key = `operator${point.chainId}_${hashTrendKey(point.role)}`;
+    const value = Number.isFinite(usd) ? usd : null;
+    const label =
+      point.role === "operator_bridge"
+        ? point.chainName
+        : `${point.chainName} ${formatTrendRole(point.role)}`;
+    const existing = series.get(key);
+    if (existing) {
+      existing.total += value ?? 0;
+    } else {
+      series.set(key, {
+        key,
+        label,
+        color: TREND_COLORS[series.size % TREND_COLORS.length],
+        total: value ?? 0,
+      });
+    }
+
+    const bucket = buckets.get(point.date) ?? { date: point.date };
+    addTrendValue(bucket, key, value);
+    buckets.set(point.date, bucket);
+  }
+
+  return finalizeTrendChart(buckets, series);
+}
+
+function finalizeTrendChart(
+  buckets: Map<string, TrendChartRow>,
+  seriesMap: Map<string, TrendSeries>,
+): { data: TrendChartRow[]; series: TrendSeries[] } {
+  const series = Array.from(seriesMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, TREND_COLORS.length)
+    .map((item, index) => ({
+      ...item,
+      color: TREND_COLORS[index],
+    }));
+  const rows = Array.from(buckets.values())
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map((bucket) => {
+      const row: TrendChartRow = { date: String(bucket.date) };
+      for (const item of series) {
+        const value = bucket[item.key];
+        row[item.key] = typeof value === "number" || value === null ? value : 0;
+      }
+      return row;
+    });
+  return {
+    data: rows,
+    series,
+  };
+}
+
+function addTrendValue(row: TrendChartRow, key: string, value: number | null) {
+  if (value === null) {
+    if (!(key in row)) row[key] = null;
+    return;
+  }
+  row[key] = Number(row[key] ?? 0) + value;
+}
+
+function formatTrendRole(role: string): string {
+  return role.replace(/^op_/, "").replace(/_/g, " ");
+}
+
+function hashTrendKey(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+function formatChartDateTick(value: string): string {
+  if (value.includes("T")) return value.split("T")[1];
+  const parts = value.split("-");
+  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : value;
+}
+
+function compactUSD(value: number): string {
+  if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}m`;
+  if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
+  if (value >= 1) return `$${value.toFixed(0)}`;
+  if (value > 0) return `$${value.toFixed(4)}`;
+  return "$0";
+}
+
 function summaryTokenVolumeUsd(
   data: StatsSummary,
   config: BridgeConfig | undefined,
@@ -1111,7 +1493,7 @@ function summaryTokenVolumeUsd(
   if (!data.tokenVolumes.length) return Number.NaN;
   let total = 0;
   for (const row of data.tokenVolumes) {
-    const token = resolveStatsToken(config, row.token, row.eid);
+    const token = resolveStatsToken(config, row.token, statsTokenEid(row));
     const amount = tokenAmountNumber(row.totalVolume, token.decimals);
     const price = tokenUsdPrice(token.symbol, prices);
     if (!Number.isFinite(amount) || !Number.isFinite(price)) {
