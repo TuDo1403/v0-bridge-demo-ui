@@ -17,6 +17,28 @@ export interface StatsSummary {
   withdrawVolumeFormatted: string;
   gasSponsoredCount: number;
   timeRange: string;
+  tokenVolumes: TokenVolumeStat[];
+  chainFees: ChainFeeStat[];
+}
+
+export interface TokenVolumeStat {
+  eid: number;
+  chainName: string;
+  token: string;
+  depositVolume: string;
+  withdrawVolume: string;
+  totalVolume: string;
+  depositCount: number;
+  withdrawCount: number;
+  transactionCount: number;
+}
+
+export interface ChainFeeStat {
+  eid: number;
+  chainName: string;
+  token: string;
+  fee: string;
+  transactionCount: number;
 }
 
 export interface VolumePoint {

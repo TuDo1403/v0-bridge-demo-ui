@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { PageShell } from "@/components/bridge/page-shell";
+import { useBridgeConfig, type BridgeConfig, type ConfigToken } from "@/lib/bridge-config";
 import {
   fetchStatsSummary,
   fetchStatsVolume,
@@ -44,6 +45,8 @@ import {
   AlertTriangle,
   ArrowRight,
   Loader2,
+  Coins,
+  ReceiptText,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +82,15 @@ const JOB_STATUS_COLORS: Record<string, string> = {
 export function StatsPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
   const network = useNetworkStore((s) => s.network);
+  const { config: bridgeConfig, isLoading: configLoading } = useBridgeConfig();
+  const { data: prices, isLoading: pricesLoading } = useSWR(
+    "stats-token-prices",
+    fetchTokenPrices,
+    {
+      refreshInterval: 300_000,
+      revalidateOnFocus: false,
+    },
+  );
 
   const { data: summary, isLoading: summaryLoading } = useSWR(
     ["stats-summary", timeRange, network],
@@ -119,7 +131,26 @@ export function StatsPage() {
         <BlockSyncProgress data={syncData} loading={syncLoading} />
 
         {/* Summary Cards */}
-        <SummaryCards data={summary} loading={summaryLoading} />
+        <SummaryCards
+          data={summary}
+          config={bridgeConfig}
+          prices={prices}
+          loading={summaryLoading || configLoading || pricesLoading}
+        />
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <TokenVolumeBreakdown
+            data={summary}
+            config={bridgeConfig}
+            loading={summaryLoading || configLoading}
+          />
+          <ChainFeesTable
+            data={summary}
+            config={bridgeConfig}
+            prices={prices}
+            loading={summaryLoading || configLoading || pricesLoading}
+          />
+        </div>
 
         {/* Volume Chart */}
         <VolumeChart data={volume} loading={volumeLoading} />
@@ -134,6 +165,165 @@ export function StatsPage() {
         <RecentFailures data={jobs} loading={jobsLoading} />
       </div>
     </PageShell>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Token Volume Breakdown                                             */
+/* ------------------------------------------------------------------ */
+
+function TokenVolumeBreakdown({
+  data,
+  config,
+  loading,
+}: {
+  data: StatsSummary | undefined;
+  config: BridgeConfig | undefined;
+  loading: boolean;
+}) {
+  const rows = data?.tokenVolumes ?? [];
+
+  return (
+    <div className="border border-border/50 bg-card rounded-lg p-4">
+      <div className="flex items-center gap-1.5 mb-3">
+        <Coins className="h-3 w-3 text-primary" />
+        <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
+          Volume by Token
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="flex items-center justify-center py-8 text-xs font-mono text-muted-foreground">
+          No volume
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="text-[10px] text-muted-foreground uppercase tracking-wider border-b border-border/30">
+                <th className="text-left py-2 pr-3">Token</th>
+                <th className="text-right py-2 pr-3">Total</th>
+                <th className="text-right py-2 pr-3">Deposits</th>
+                <th className="text-right py-2">Withdrawals</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const token = resolveStatsToken(config, row.token, row.eid);
+                const total = formatTokenUnits(row.totalVolume, token.decimals);
+                const deposits = formatTokenUnits(row.depositVolume, token.decimals);
+                const withdrawals = formatTokenUnits(row.withdrawVolume, token.decimals);
+
+                return (
+                  <tr
+                    key={`${row.eid}:${row.token}`}
+                    className="border-b border-border/20 last:border-0"
+                  >
+                    <td className="py-2 pr-3">
+                      <div className="text-foreground">{token.symbol}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {row.chainName} · {row.transactionCount.toLocaleString()} tx
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-right text-foreground tabular-nums">
+                      {total}
+                    </td>
+                    <td className="py-2 pr-3 text-right text-muted-foreground tabular-nums">
+                      {deposits}
+                    </td>
+                    <td className="py-2 text-right text-muted-foreground tabular-nums">
+                      {withdrawals}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Chain Fees                                                         */
+/* ------------------------------------------------------------------ */
+
+function ChainFeesTable({
+  data,
+  config,
+  prices,
+  loading,
+}: {
+  data: StatsSummary | undefined;
+  config: BridgeConfig | undefined;
+  prices: TokenPrices | undefined;
+  loading: boolean;
+}) {
+  const rows = data?.chainFees ?? [];
+
+  return (
+    <div className="border border-border/50 bg-card rounded-lg p-4">
+      <div className="flex items-center gap-1.5 mb-3">
+        <ReceiptText className="h-3 w-3 text-primary" />
+        <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">
+          Transaction Fees by Chain
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="flex items-center justify-center py-8 text-xs font-mono text-muted-foreground">
+          No fees
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="text-[10px] text-muted-foreground uppercase tracking-wider border-b border-border/30">
+                <th className="text-left py-2 pr-3">Chain</th>
+                <th className="text-right py-2 pr-3">Fee</th>
+                <th className="text-right py-2">USD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const token = resolveStatsToken(config, row.token, row.eid);
+                const fee = tokenAmountNumber(row.fee, token.decimals);
+                const usd = fee * tokenUsdPrice(token.symbol, prices);
+
+                return (
+                  <tr
+                    key={`${row.eid}:${row.token}`}
+                    className="border-b border-border/20 last:border-0"
+                  >
+                    <td className="py-2 pr-3">
+                      <div className="text-foreground">{row.chainName}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {row.transactionCount.toLocaleString()} tx
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-right text-muted-foreground tabular-nums">
+                      {formatTokenUnits(row.fee, token.decimals)} {token.symbol}
+                    </td>
+                    <td className="py-2 text-right text-foreground tabular-nums">
+                      {Number.isFinite(usd) ? formatUSD(usd) : "--"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -174,15 +364,24 @@ function TimeRangeSelector({
 
 function SummaryCards({
   data,
+  config,
+  prices,
   loading,
 }: {
   data: StatsSummary | undefined;
+  config: BridgeConfig | undefined;
+  prices: TokenPrices | undefined;
   loading: boolean;
 }) {
+  const tokenVolumeUsd = data ? summaryTokenVolumeUsd(data, config, prices) : Number.NaN;
   const cards = [
     {
       label: "Total Volume",
-      value: data ? `$${Number(data.totalVolumeFormatted).toLocaleString()}` : "--",
+      value: data
+        ? Number.isFinite(tokenVolumeUsd)
+          ? formatUSD(tokenVolumeUsd)
+          : `$${Number(data.totalVolumeFormatted).toLocaleString()}`
+        : "--",
       sub: data ? `${data.totalFeesFormatted} fees` : "",
       icon: DollarSign,
     },
@@ -776,4 +975,161 @@ function formatTimeAgo(isoDate: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+interface StatsTokenMeta {
+  symbol: string;
+  decimals?: number;
+}
+
+interface TokenPrices {
+  ethUsd?: number;
+}
+
+async function fetchTokenPrices(): Promise<TokenPrices> {
+  const res = await fetch("https://coins.llama.fi/prices/current/coingecko:ethereum", {
+    cache: "no-store",
+  });
+  if (!res.ok) return {};
+  const data = await res.json();
+  const price = data?.coins?.["coingecko:ethereum"]?.price;
+  return typeof price === "number" ? { ethUsd: price } : {};
+}
+
+function resolveStatsToken(
+  config: BridgeConfig | undefined,
+  tokenAddress: string,
+  eid?: number,
+): StatsTokenMeta {
+  if (tokenAddress === "native:ETH") {
+    return { symbol: "ETH", decimals: 18 };
+  }
+
+  const token = findStatsToken(config, tokenAddress, eid);
+  if (token) {
+    const chain =
+      (eid ? token.chains[String(eid)] : undefined) ??
+      Object.values(token.chains)[0];
+    return {
+      symbol: chain?.symbol ?? shortAddress(tokenAddress),
+      decimals: token.decimals,
+    };
+  }
+
+  return { symbol: shortAddress(tokenAddress) };
+}
+
+function findStatsToken(
+  config: BridgeConfig | undefined,
+  tokenAddress: string,
+  eid?: number,
+): ConfigToken | undefined {
+  if (!config) return undefined;
+  const addr = tokenAddress.toLowerCase();
+  if (eid) {
+    const chainKey = String(eid);
+    const exact = config.tokens.find(
+      (token) => token.chains[chainKey]?.address.toLowerCase() === addr,
+    );
+    if (exact) return exact;
+    return undefined;
+  }
+  return config.tokens.find((token) =>
+    Object.values(token.chains).some((chain) => chain.address.toLowerCase() === addr),
+  );
+}
+
+function formatTokenUnits(raw: string, decimals?: number, maxFraction = 4): string {
+  if (decimals == null) {
+    return `${raw || "0"} raw`;
+  }
+
+  let value: bigint;
+  try {
+    value = BigInt(raw || "0");
+  } catch {
+    return "0";
+  }
+  const zero = BigInt(0);
+  const negative = value < zero;
+  if (negative) value = -value;
+
+  let scale = BigInt(1);
+  for (let i = 0; i < decimals; i++) {
+    scale *= BigInt(10);
+  }
+  const whole = value / scale;
+  const fraction = value % scale;
+  let out = whole.toLocaleString("en-US");
+  if (maxFraction > 0 && fraction > zero) {
+    const padded = fraction.toString().padStart(decimals, "0");
+    const trimmed = padded.slice(0, maxFraction).replace(/0+$/, "");
+    if (trimmed) out += `.${trimmed}`;
+  }
+  return negative ? `-${out}` : out;
+}
+
+function tokenAmountNumber(raw: string, decimals?: number): number {
+  if (decimals == null) return Number.NaN;
+  let value: bigint;
+  try {
+    value = BigInt(raw || "0");
+  } catch {
+    return Number.NaN;
+  }
+
+  const zero = BigInt(0);
+  const negative = value < zero;
+  if (negative) value = -value;
+
+  let scale = BigInt(1);
+  for (let i = 0; i < decimals; i++) {
+    scale *= BigInt(10);
+  }
+
+  const whole = value / scale;
+  const fraction = value % scale;
+  const precision = 12;
+  const decimal = `${whole.toString()}.${fraction.toString().padStart(decimals, "0").slice(0, precision)}`;
+  const amount = Number(decimal);
+  if (!Number.isFinite(amount)) return Number.NaN;
+  return negative ? -amount : amount;
+}
+
+function tokenUsdPrice(symbol: string, prices: TokenPrices | undefined): number {
+  const normalized = symbol.replace(/\.e$/i, "").toUpperCase();
+  if (["USDC", "USDT", "DAI", "USD"].includes(normalized)) return 1;
+  if (normalized === "ETH") return prices?.ethUsd ?? Number.NaN;
+  return Number.NaN;
+}
+
+function summaryTokenVolumeUsd(
+  data: StatsSummary,
+  config: BridgeConfig | undefined,
+  prices: TokenPrices | undefined,
+): number {
+  if (!data.tokenVolumes.length) return Number.NaN;
+  let total = 0;
+  for (const row of data.tokenVolumes) {
+    const token = resolveStatsToken(config, row.token, row.eid);
+    const amount = tokenAmountNumber(row.totalVolume, token.decimals);
+    const price = tokenUsdPrice(token.symbol, prices);
+    if (!Number.isFinite(amount) || !Number.isFinite(price)) {
+      return Number.NaN;
+    }
+    total += amount * price;
+  }
+  return total;
+}
+
+function formatUSD(value: number): string {
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 100 ? 0 : value >= 1 ? 2 : 4,
+  });
+}
+
+function shortAddress(value: string): string {
+  return value.length > 10 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
 }
