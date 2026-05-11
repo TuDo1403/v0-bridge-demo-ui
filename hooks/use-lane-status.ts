@@ -60,11 +60,11 @@ function findRouteTokenBySymbol(
   eid: number,
   tokenIds: string[] | undefined,
   symbol: string,
-): ConfigToken | undefined {
-  if (!config || !tokenIds?.length) return undefined;
+): ConfigToken[] {
+  if (!config || !tokenIds?.length) return [];
 
   const allowedTokenIds = new Set(tokenIds.map((id) => id.toLowerCase()));
-  return config.tokens.find((token) => {
+  return config.tokens.filter((token) => {
     if (!allowedTokenIds.has(token.id.toLowerCase())) return false;
 
     const tokenChain = token.chains[String(eid)];
@@ -72,13 +72,13 @@ function findRouteTokenBySymbol(
   });
 }
 
-function findRouteToken(
+function findRouteTokens(
   config: BridgeConfig | undefined,
   srcEid: number,
   dstEid: number,
   direction: "deposit" | "withdraw",
   tokenEid: number,
-): ConfigToken | undefined {
+): ConfigToken[] {
   const route = config?.routes.find((candidate) =>
     candidate.srcEid === srcEid &&
     candidate.dstEid === dstEid &&
@@ -203,36 +203,44 @@ export function useLaneStatus(): UseLaneStatusReturn {
       const destChainId = Object.values(CHAINS).find((c) => c.lzEid === eid)?.chain.id;
       if (!destChainId) continue;
 
-      const sourceToken = findRouteToken(
+      const sourceTokens = findRouteTokens(
         bridgeConfig,
         riseEid,
         eid,
         "withdraw",
         riseEid,
       );
-      const destToken = findRouteToken(
+      const destTokens = findRouteTokens(
         bridgeConfig,
         eid,
         riseEid,
         "deposit",
         eid,
       );
-      const sourceTokenChain = sourceToken?.chains[String(riseEid)];
-      const destTokenChain = destToken?.chains[String(eid)];
-      const sourceOft =
-        sourceTokenChain?.oft ||
-        fallbackUsdcToken?.chains[String(riseEid)]?.oft ||
-        CONTRACTS[riseChainId]?.mintBurnOFT;
-      const destOft =
-        destTokenChain?.oft ||
-        fallbackUsdcToken?.chains[String(eid)]?.oft ||
-        CONTRACTS[destChainId]?.lockReleaseOFT;
-      const decimals = sourceToken?.decimals ?? destToken?.decimals ?? fallbackUsdcToken?.decimals ?? 6;
-      const symbol = normalizeTokenSymbol(
-        sourceTokenChain?.symbol ?? destTokenChain?.symbol ?? LANE_LIMIT_TOKEN_SYMBOL,
-      );
+      const sourceCandidates = sourceTokens.length > 0
+        ? sourceTokens.map((token) => ({ token, tokenChain: token.chains[String(riseEid)] }))
+        : [{
+          token: fallbackUsdcToken,
+          tokenChain: fallbackUsdcToken?.chains[String(riseEid)] ?? (
+            CONTRACTS[riseChainId]?.mintBurnOFT
+              ? { oft: CONTRACTS[riseChainId].mintBurnOFT, symbol: LANE_LIMIT_TOKEN_SYMBOL }
+              : undefined
+          ),
+        }];
+      const destCandidates = destTokens.length > 0
+        ? destTokens.map((token) => ({ token, tokenChain: token.chains[String(eid)] }))
+        : [{
+          token: fallbackUsdcToken,
+          tokenChain: fallbackUsdcToken?.chains[String(eid)] ?? (
+            CONTRACTS[destChainId]?.lockReleaseOFT
+              ? { oft: CONTRACTS[destChainId].lockReleaseOFT, symbol: LANE_LIMIT_TOKEN_SYMBOL }
+              : undefined
+          ),
+        }];
 
-      if (sourceOft) {
+      for (const { token, tokenChain } of sourceCandidates) {
+        const sourceOft = tokenChain?.oft;
+        if (!sourceOft) continue;
         contracts.push({
           address: sourceOft as Address,
           abi: oftRateLimitAbi,
@@ -240,10 +248,17 @@ export function useLaneStatus(): UseLaneStatusReturn {
           args: [eid] as const,
           chainId: riseChainId,
         });
-        descriptors.push({ eid, kind: "outbound", decimals, symbol });
+        descriptors.push({
+          eid,
+          kind: "outbound",
+          decimals: token?.decimals ?? fallbackUsdcToken?.decimals ?? 6,
+          symbol: normalizeTokenSymbol(tokenChain?.symbol ?? LANE_LIMIT_TOKEN_SYMBOL),
+        });
       }
 
-      if (destOft) {
+      for (const { token, tokenChain } of destCandidates) {
+        const destOft = tokenChain?.oft;
+        if (!destOft) continue;
         contracts.push({
           address: destOft as Address,
           abi: oftRateLimitAbi,
@@ -251,7 +266,12 @@ export function useLaneStatus(): UseLaneStatusReturn {
           args: [riseEid] as const,
           chainId: destChainId,
         });
-        descriptors.push({ eid, kind: "inbound", decimals, symbol });
+        descriptors.push({
+          eid,
+          kind: "inbound",
+          decimals: token?.decimals ?? fallbackUsdcToken?.decimals ?? 6,
+          symbol: normalizeTokenSymbol(tokenChain?.symbol ?? LANE_LIMIT_TOKEN_SYMBOL),
+        });
       }
     }
 
