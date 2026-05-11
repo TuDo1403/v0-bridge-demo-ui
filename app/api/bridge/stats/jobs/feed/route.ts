@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   }
 
   const params = new URLSearchParams();
-  for (const key of ["address", "vaultAddress", "status", "direction", "range", "limit", "offset", "id"]) {
+  for (const key of ["address", "vaultAddress", "token", "status", "direction", "range", "limit", "offset", "id"]) {
     const v = searchParams.get(key);
     if (v) params.set(key, v);
   }

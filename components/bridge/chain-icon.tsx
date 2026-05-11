@@ -126,8 +126,41 @@ function UsdcIcon({ className }: { className?: string }) {
   );
 }
 
+function EthTokenIcon({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center justify-center rounded-full bg-[#627EEA] text-white",
+        className,
+      )}
+      aria-hidden="true"
+    >
+      <EthereumIcon className="h-[70%] w-[70%]" />
+    </span>
+  );
+}
+
+function WbtcIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 32 32"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="16" cy="16" r="16" fill="#F7931A" />
+      <path
+        d="M21.6 13.1c.3-2.1-1.3-3.3-3.6-4l.7-2.7-1.6-.4-.7 2.6-1.3-.3.7-2.6-1.6-.4-.7 2.7-1-.2-2.2-.6-.4 1.8s1.2.3 1.2.3c.7.2.8.6.8 1l-.8 3.1.2.1-.2-.1-1.1 4.4c-.1.2-.3.5-.8.4 0 0-1.2-.3-1.2-.3l-.8 1.9 2.1.5 1.2.3-.7 2.7 1.6.4.7-2.7 1.3.3-.7 2.7 1.6.4.7-2.7c2.8.5 4.9.3 5.8-2.2.7-2-.1-3.1-1.5-3.9 1.1-.2 1.9-1 2.1-2.2Zm-3.8 5c-.5 2-4 .9-5.1.6l.9-3.6c1.1.3 4.7.8 4.2 3Zm.5-5c-.5 1.8-3.4.9-4.3.7l.8-3.3c1 .2 4 .7 3.5 2.6Z"
+        fill="white"
+      />
+    </svg>
+  );
+}
+
 const TOKEN_ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
+  ETH: EthTokenIcon,
   USDC: UsdcIcon,
+  WBTC: WbtcIcon,
 };
 
 export function TokenIcon({
@@ -137,7 +170,10 @@ export function TokenIcon({
   tokenKey?: string;
   className?: string;
 }) {
-  const Icon = tokenKey ? TOKEN_ICON_MAP[tokenKey] ?? TOKEN_ICON_MAP[tokenKey.toUpperCase()] : null;
+  const normalizedTokenKey = tokenKey?.replace(/\.e$/i, "");
+  const Icon = normalizedTokenKey
+    ? TOKEN_ICON_MAP[normalizedTokenKey] ?? TOKEN_ICON_MAP[normalizedTokenKey.toUpperCase()]
+    : null;
   if (!Icon) return null;
   return <Icon className={cn("shrink-0", className)} />;
 }

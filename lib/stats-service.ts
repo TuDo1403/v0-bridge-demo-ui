@@ -155,6 +155,8 @@ export interface JobFeedItem {
   sender: string;
   receiver: string;
   token: string;
+  tokenSymbol?: string;
+  tokenDecimals?: number | null;
   amount: string;
   retryCount: number;
   errorMessage: string | null;
@@ -189,6 +191,7 @@ export interface JobFeedResponse {
 export interface JobFeedFilter {
   address?: string;
   vaultAddress?: string;
+  token?: string;
   status?: string;
   direction?: string;
   range?: TimeRange;
@@ -264,6 +267,7 @@ export async function fetchJobFeed(
   const params = new URLSearchParams({ net: network, limit: String(limit), offset: String(offset) });
   if (filter.address) params.set("address", filter.address);
   if (filter.vaultAddress) params.set("vaultAddress", filter.vaultAddress);
+  if (filter.token) params.set("token", filter.token);
   if (filter.status) params.set("status", filter.status);
   if (filter.direction) params.set("direction", filter.direction);
   if (filter.range) params.set("range", filter.range);

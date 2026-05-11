@@ -14,7 +14,7 @@ import {
   Link2,
 } from "lucide-react";
 import { PageShell } from "@/components/bridge/page-shell";
-import { ChainIcon } from "@/components/bridge/chain-icon";
+import { ChainIcon, TokenIcon } from "@/components/bridge/chain-icon";
 import { NativeKindBadge } from "@/components/bridge/native-kind-badge";
 import { NativePhaseTimeline } from "@/components/bridge/native-phase-timeline";
 import {
@@ -51,6 +51,8 @@ const TIME_RANGES: { label: string; value: TimeRange }[] = [
   { label: "30d", value: "30d" },
   { label: "All", value: "all" },
 ];
+
+const TOKEN_FILTERS = ["ETH", "USDC", "WBTC"] as const;
 
 // Derived 3-state bridge status shown in the table, computed from job + LZ data.
 const BRIDGE_STAGES = [
@@ -580,6 +582,35 @@ function FilterBar({
           </select>
         </div>
 
+        {/* Token */}
+        <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-muted/30 border border-border/50">
+          <button
+            onClick={() => onChange({ token: undefined })}
+            className={cn(
+              "px-2 py-1 rounded text-[10px] font-mono transition-colors",
+              !filter.token
+                ? "bg-primary/15 text-primary border border-primary/20"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            All
+          </button>
+          {TOKEN_FILTERS.map((token) => (
+            <button
+              key={token}
+              onClick={() => onChange({ token })}
+              className={cn(
+                "px-2 py-1 rounded text-[10px] font-mono transition-colors",
+                filter.token === token
+                  ? "bg-primary/15 text-primary border border-primary/20"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {token}
+            </button>
+          ))}
+        </div>
+
         {/* Direction */}
         <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-muted/30 border border-border/50">
           {(["", "deposit", "withdraw"] as const).map((d) => (
@@ -691,12 +722,18 @@ function JobRow({
 
         <td className="py-2 pr-3 text-right text-foreground tabular-nums hidden sm:table-cell whitespace-nowrap">
           {(() => {
-            const { display, symbol } = formatTokenAmount(item.amount, item.token);
+            const { display, symbol } = formatTokenAmount(
+              item.amount,
+              item.token,
+              item.tokenSymbol,
+              item.tokenDecimals,
+            );
             return (
-              <>
-                {display}
-                <span className="text-muted-foreground/70 ml-1">{symbol}</span>
-              </>
+              <span className="inline-flex items-center justify-end gap-1.5">
+                <TokenIcon tokenKey={symbol} className="h-3.5 w-3.5" />
+                <span>{display}</span>
+                <span className="text-muted-foreground/70">{symbol}</span>
+              </span>
             );
           })()}
         </td>
@@ -775,11 +812,11 @@ function ExpandedDetail({ item, network }: { item: JobFeedItem; network: "mainne
         <DetailRow label="Receiver" value={item.receiver} copyable adaptive />
         <DetailRow label="Token"    value={item.token}    copyable adaptive />
         {(() => {
-          const a = formatTokenAmount(item.amount, item.token);
+          const a = formatTokenAmount(item.amount, item.token, item.tokenSymbol, item.tokenDecimals);
           return <DetailRow label="Amount" value={`${a.display} ${a.symbol}`} />;
         })()}
         {item.fee && (() => {
-          const f = formatTokenAmount(item.fee, item.token);
+          const f = formatTokenAmount(item.fee, item.token, item.tokenSymbol, item.tokenDecimals);
           return <DetailRow label="Fee" value={`${f.display} ${f.symbol}`} />;
         })()}
         <DetailRow label="Retries"  value={String(item.retryCount)} />
@@ -1087,31 +1124,38 @@ function formatUSDC(raw: string | null | undefined): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Format a token amount (raw integer string in smallest units) using
- *  the right decimals for the token. ETH (zero address) → 18 decimals;
- *  every other token assumed USDC (6 decimals) for now. Pads to 6 sig
- *  figs for ETH so very small bridges (0.0001) read correctly. */
-function formatTokenAmount(raw: string | null | undefined, tokenAddr: string): {
+/** Format a token amount (raw integer string in smallest units). */
+function formatTokenAmount(
+  raw: string | null | undefined,
+  tokenAddr: string,
+  tokenSymbol?: string,
+  tokenDecimals?: number | null,
+): {
   display: string;
   symbol: string;
 } {
-  if (!raw || raw === "0") return { display: "0", symbol: tokenAmountSymbol(tokenAddr) };
+  const symbol = tokenSymbol || tokenAmountSymbol(tokenAddr);
+  if (!raw || raw === "0") return { display: "0", symbol };
   const isETH = tokenAddr === "0x0000000000000000000000000000000000000000";
-  const decimals = isETH ? 18 : 6;
+  const decimals = typeof tokenDecimals === "number" ? tokenDecimals : isETH ? 18 : null;
+  if (decimals === null) {
+    return { display: raw, symbol };
+  }
   // Number() loses precision past ~15 sig figs which is fine for display
   // (largest bridge amount is well under 2^53 wei = ~9007 ETH).
   const n = Number(raw) / 10 ** decimals;
+  const isWbtc = symbol.replace(/\.e$/i, "").toUpperCase() === "WBTC";
   return {
     display: n.toLocaleString(undefined, {
       minimumFractionDigits: isETH ? 4 : 2,
-      maximumFractionDigits: isETH ? 6 : 2,
+      maximumFractionDigits: isETH ? 6 : isWbtc ? 8 : 2,
     }),
-    symbol: tokenAmountSymbol(tokenAddr),
+    symbol,
   };
 }
 
 function tokenAmountSymbol(tokenAddr: string): string {
-  return tokenAddr === "0x0000000000000000000000000000000000000000" ? "ETH" : "USDC";
+  return tokenAddr === "0x0000000000000000000000000000000000000000" ? "ETH" : "token";
 }
 
 function formatTimeAgo(iso: string): string {
