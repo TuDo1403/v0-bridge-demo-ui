@@ -77,6 +77,7 @@ export async function fetchHistory(
   offset = 0,
   srcEid?: number,
   dstEid?: number,
+  dappId?: number,
   network: "mainnet" | "testnet" = "mainnet"
 ): Promise<HistoryResponse> {
   const params = new URLSearchParams({
@@ -87,6 +88,7 @@ export async function fetchHistory(
   });
   if (srcEid) params.set("srcEid", String(srcEid));
   if (dstEid) params.set("dstEid", String(dstEid));
+  if (dappId !== undefined) params.set("dappId", String(dappId));
 
   const res = await fetch(`${API_BASE}/history?${params.toString()}`);
 

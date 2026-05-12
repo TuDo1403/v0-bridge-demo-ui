@@ -123,6 +123,7 @@ export interface TxHashPair {
   src_address?: string;
   dst_address?: string;
   token?: string;
+  dapp_id?: number;
   amount?: string;
   created_at?: string;
   lz_status?: string;

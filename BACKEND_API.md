@@ -82,10 +82,10 @@ Used by: **Search/Track tab** (`tx-search.tsx`)
 **Response (200):** Same as GET /v1/bridge/status/{jobId}
 **Response (404):** No job matches the given hash
 
-### 4. GET /v1/bridge/history/{address}?limit=20&offset=0
+### 4. GET /v1/bridge/history/{address}?limit=20&offset=0&dappId=0
 Get paginated bridge history for a wallet address.
 
-**Proxy route:** `/api/bridge/history?address={addr}&limit=20&offset=0`
+**Proxy route:** `/api/bridge/history?address={addr}&limit=20&offset=0&dappId=0`
 
 Used by: **History tab** (`history-page.tsx`)
 

@@ -11,6 +11,8 @@ import type { TxHashPair, HistoryResponse, LzTrackingSnapshot } from "@/lib/type
 import { NativeKindBadge } from "@/components/bridge/native-kind-badge";
 import { NativePhaseTimeline } from "@/components/bridge/native-phase-timeline";
 import { CHAINS, getLzScanBase, eidToChainMeta } from "@/config/chains";
+import { KNOWN_DAPPS } from "@/config/contracts";
+import { useBridgeConfig } from "@/lib/bridge-config";
 import { useNetworkStore } from "@/lib/network-store";
 import { TxBadge } from "@/components/bridge/tx-badge";
 import { ChainIcon, TokenIcon } from "@/components/bridge/chain-icon";
@@ -322,6 +324,7 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
   const router = useRouter();
   const { address: walletAddress } = useAccount();
   const network = useNetworkStore((s) => s.network);
+  const { config } = useBridgeConfig();
   const LZ_SCAN_BASE = getLzScanBase(network);
 
   const address = addressParam ?? walletAddress;
@@ -330,6 +333,7 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
   const [pageSize, setPageSize] = useState(5);
   const [srcEidFilter, setSrcEidFilter] = useState<string>("all");
   const [dstEidFilter, setDstEidFilter] = useState<string>("all");
+  const [dappIdFilter, setDappIdFilter] = useState<string>("all");
 
   // LZ enrichment cache: bridge_tx_hash -> LzTrackingSnapshot
   const [lzCache, setLzCache] = useState<Record<string, LzTrackingSnapshot | null>>({});
@@ -344,10 +348,18 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
-  }, [srcEidFilter, dstEidFilter, pageSize]);
+  }, [srcEidFilter, dstEidFilter, dappIdFilter, pageSize]);
 
   const srcEid = srcEidFilter !== "all" ? Number(srcEidFilter) : undefined;
   const dstEid = dstEidFilter !== "all" ? Number(dstEidFilter) : undefined;
+  const dappId = dappIdFilter !== "all" ? Number(dappIdFilter) : undefined;
+  const dappFilterOptions = [
+    { label: "All Dapps", value: "all" },
+    ...(config?.dapps?.length ? config.dapps : KNOWN_DAPPS).map((dapp) => ({
+      label: dapp.label,
+      value: String(dapp.dappId),
+    })),
+  ];
 
   const {
     data: historyData,
@@ -355,8 +367,10 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
     isLoading,
     mutate,
   } = useSWR<HistoryResponse>(
-    address ? ["bridge-history", address, page, pageSize, srcEidFilter, dstEidFilter] : null,
-    () => fetchHistory(address!, pageSize, page * pageSize, srcEid, dstEid, network),
+    address
+      ? ["bridge-history", address, page, pageSize, srcEidFilter, dstEidFilter, dappIdFilter, network]
+      : null,
+    () => fetchHistory(address!, pageSize, page * pageSize, srcEid, dstEid, dappId, network),
     { refreshInterval: 15000, revalidateOnFocus: true }
   );
 
@@ -465,6 +479,21 @@ export function HistoryPage({ addressParam }: { addressParam?: string } = {}) {
               </SelectTrigger>
               <SelectContent>
                 {CHAIN_FILTER_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value} className="text-xs font-mono">
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono text-muted-foreground/60 uppercase">Dapp</span>
+            <Select value={dappIdFilter} onValueChange={setDappIdFilter}>
+              <SelectTrigger className="h-7 w-[180px] text-xs font-mono bg-muted/30 border-border">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {dappFilterOptions.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value} className="text-xs font-mono">
                     {opt.label}
                   </SelectItem>

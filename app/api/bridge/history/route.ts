@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { proxyBridgeApi } from "@/lib/api-proxy";
 
 /**
- * GET /api/bridge/history?address=0x...&limit=5&offset=0&srcEid=40161&dstEid=40438&net=mainnet
+ * GET /api/bridge/history?address=0x...&limit=5&offset=0&srcEid=40161&dstEid=40438&dappId=0&net=mainnet
  *
- * Proxies to backend: GET /v1/bridge/history/{address}?limit=&offset=&srcEid=&dstEid=
+ * Proxies to backend: GET /v1/bridge/history/{address}?limit=&offset=&srcEid=&dstEid=&dappId=
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -13,6 +13,7 @@ export async function GET(request: Request) {
   const offset = searchParams.get("offset") ?? "0";
   const srcEid = searchParams.get("srcEid");
   const dstEid = searchParams.get("dstEid");
+  const dappId = searchParams.get("dappId");
   const net = searchParams.get("net") ?? "mainnet";
 
   if (!address) {
@@ -26,6 +27,7 @@ export async function GET(request: Request) {
     const params = new URLSearchParams({ limit, offset });
     if (srcEid) params.set("srcEid", srcEid);
     if (dstEid) params.set("dstEid", dstEid);
+    if (dappId) params.set("dappId", dappId);
     return proxyBridgeApi(
       `/v1/bridge/history/${encodeURIComponent(address)}?${params}`,
       { cache: "no-store" },
